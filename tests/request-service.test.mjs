@@ -96,3 +96,73 @@ describe('request execution', () => {
     expect(result.error.message).not.toContain('private internal details');
   });
 });
+
+describe('query parameters', () => {
+  function mockFetch() {
+    const fetchMock = vi.fn(async () => new Response('{"message":"received"}'));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function param(key, value, enabled = true) {
+    return { key, value, enabled };
+  }
+
+  it('keeps existing parameters and appends repeated names before the URL fragment', async () => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, url: `${request.url}?tag=original&keep=1#section`, queryParams: [param('tag', 'second'), param('tag', 'third')] });
+    const expected = `${request.url}?tag=original&keep=1&tag=second&tag=third#section`;
+    expect(fetchMock.mock.calls[0][0]).toBe(expected);
+    expect(result.response.url).toBe(expected);
+  });
+
+  it('encodes names, spaces, delimiters, plus signs, and Unicode without creating extra parameters', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, queryParams: [param('space name', 'café & + 😀')] });
+    expect(fetchMock.mock.calls[0][0]).toBe(`${request.url}?space+name=caf%C3%A9+%26+%2B+%F0%9F%98%80`);
+  });
+
+  it('ignores disabled and entirely blank rows but sends explicitly named empty values', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, queryParams: [param('ignored', 'secret', false), param('', ''), param('empty', '')] });
+    expect(fetchMock.mock.calls[0][0]).toBe(`${request.url}?empty=`);
+  });
+
+  it('does not rewrite existing query encoding when no extra parameters are active', async () => {
+    const fetchMock = mockFetch();
+    const url = `${request.url}?token=a%20b&flag=1`;
+    await executeRequest({ ...request, url, queryParams: [param('', ''), param('unused', 'value', false)] });
+    expect(fetchMock.mock.calls[0][0]).toBe(url);
+  });
+
+  it('encodes a literal percent sign once instead of interpreting user text as pre-encoded data', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, queryParams: [param('q', 'a%20b')] });
+    expect(fetchMock.mock.calls[0][0]).toBe(`${request.url}?q=a%2520b`);
+  });
+
+  it('does not accumulate parameters or mutate input when the same request is sent twice', async () => {
+    const fetchMock = mockFetch();
+    const input = Object.freeze({ ...request, queryParams: Object.freeze([Object.freeze(param('page', '2'))]) });
+    await executeRequest(input);
+    await executeRequest(input);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`${request.url}?page=2`, `${request.url}?page=2`]);
+    expect(input.url).toBe(request.url);
+  });
+
+  it.each([
+    ['a missing name with a value', [param('', 'orphaned value')]],
+    ['a whitespace-only name', [param('   ', 'value')]],
+    ['a non-array parameter list', 'page=2'],
+    ['a null parameter list', null],
+    ['a missing row', [null]],
+    ['a non-string name', [param(2, 'value')]],
+    ['a non-string value', [param('page', 2)]],
+    ['a missing enabled flag', [{ key: 'page', value: '2' }]],
+  ])('rejects %s before sending the request', async (_description, queryParams) => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, queryParams });
+    expect(result.error.code).toBe('INVALID_PARAMS');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -42,7 +42,7 @@ CommonJS and TypeScript describe different things. CommonJS is the `require()` /
 
 1. In `src/App.jsx`, pressing Send submits the form and calls `handleSend`.
 2. `setLoading(true)` causes React to render a disabled send button and a waiting state. `useState` holds this screen's current data.
-3. The UI calls `window.reqdelta.sendRequest({ method, url })` and awaits the result. The selected method starts as GET. `await` pauses this function until its promise settles; it does not freeze the whole application.
+3. The UI calls `window.reqdelta.sendRequest({ method, url, queryParams })` and awaits the result. The selected method starts as GET; the extra query parameter list starts empty. `await` pauses this function until its promise settles; it does not freeze the whole application.
 4. In `electron/preload.cjs`, `ipcRenderer.invoke('requests:send', request)` sends a message to Electron's main process. IPC means inter-process communication.
 5. In `electron/main.cjs`, `ipcMain.handle('requests:send', ...)` receives that message. It checks the sender and then calls `executeRequest`.
 6. In `electron/request-service.cjs`, the service validates the URL, sends an HTTP GET request, reads the body, and returns a plain result object.
@@ -131,7 +131,7 @@ This checkpoint adds the method choice only. No request body is sent yet. A body
 ### Trace the change
 
 1. In `src/App.jsx`, `useState('GET')` holds the chosen method. The `<select>` gets its current value from that state, and `onChange` updates it. This is a **controlled input**: React state determines what the control displays.
-2. `handleSend` now passes `{ method, url }`. That is object shorthand for `{ method: method, url: url }`.
+2. `handleSend` passes the chosen `method` and `url` as properties of the request object. `{ method, url }` is object shorthand for `{ method: method, url: url }`. Lesson 3 adds `queryParams` to this object.
 3. Preload and main-process IPC already forward the whole request object. Their code does not need to change just because the method can vary.
 4. In `electron/request-service.cjs`, `SUPPORTED_METHODS.includes(request.method)` checks the method against a short allowed list. A dropdown improves the UI; validation in the main service still enforces the rule.
 5. `validateRequest` now returns `{ url, method }`. The line `const { url, method } = validateRequest(request)` extracts both properties using **object destructuring**.
@@ -158,4 +158,61 @@ Verification passed: all 25 request-service tests, the production build, and the
 
 Message: `feat(requests): support GET POST PUT and DELETE methods`
 
-Next separate checkpoint: add a query parameter editor.
+The query parameter editor is the next checkpoint, covered in Lesson 3 below.
+
+## Lesson 3: query parameters and arrays in React
+
+In a URL such as `http://localhost:3030/students/101?version=2`, `version` is a query parameter name and `2` is its value. The server decides what those parameters mean. Our demo API uses `version=2` to return the second student snapshot.
+
+This editor adds **extra parameters**. Parameters already typed in the URL stay there, and enabled editor rows are appended when sending. The URL input is not synchronized with the rows. If you use the same name twice, both values are sent; it is up to the API how it interprets them.
+
+### The row data
+
+Each row has five properties:
+
+```js
+{
+  id: 'a-stable-unique-id',
+  enabled: true,
+  key: 'version',
+  value: '2'
+}
+```
+
+The ID identifies the row in React, while `key` and `value` are the actual query parameter. The ID is not included in the URL. We use an array rather than one JavaScript object because repeated query names, such as `tag=one&tag=two`, need to remain separate entries.
+
+### Follow the code
+
+1. `src/App.jsx` stores `queryParams` in state and passes it to `QueryParamsEditor`. Keeping request state in the parent lets the editor change rows and the Send handler read the same list. This is called **lifting state up**.
+2. The editor's Add button creates a row with `crypto.randomUUID()` and returns a new array using `[...params, newRow]`. Spread syntax copies the existing entries into that new array.
+3. Editing a row uses `map()`. It returns a new object for the matching ID and keeps the other rows. Removing a row uses `filter()` to keep every row except that ID. We do not mutate the existing state array.
+4. `<tr key={param.id}>` gives React a stable identity for each row. The table can use row numbers in labels, but those changing numbers should not be the React keys when rows can be removed.
+5. `handleSend` includes `queryParams` in the request object. The preload and main IPC handler continue forwarding it without needing new bridge functions.
+6. The main-process request service validates the list and row types before making a network call. Disabled rows and fully blank rows are skipped. A named row may have an empty value; a value without a name is an error.
+7. `url.searchParams.append(param.key, param.value)` adds each enabled row. This handles encoding and repeated names. Concatenating `&name=value` manually can misinterpret characters such as `&` or `+` inside a value. See the [Node URL API](https://nodejs.org/api/url.html#urlsearchparamsappendname-value).
+8. The demo `/echo` response now includes a `queryParams` array. Each entry contains a received `key` and `value`, so we can observe the actual network result rather than only checking what the UI displays.
+
+### Practise it
+
+1. Restart both the demo API and the desktop app. Main-process and demo-server code do not update through React's live refresh.
+2. Click **Student JSON**, add a row named `version` with value `2`, and send. Find `fullName` and the string age `"20"` in the response.
+3. Uncheck that row and send again. The original `name` field and numeric age should return. The row still exists so you can enable it again.
+4. Click **Method echo**. Add `search` with the value `tea & coffee + café`. Send and confirm the response contains that complete value in one entry.
+5. Add two `tag` rows with different values. Both should appear in the response. Then remove one and confirm the remaining row keeps its value.
+6. Enter a value without a name and send. Explain why the app shows a validation error before reaching the API.
+
+The earlier screenshot's `/echo` 404 was resolved by restarting the demo API. A running process keeps its loaded code; saving a new version on disk alone does not change that process.
+
+Checkpoint questions: Why is the list state in `App`? Why use stable row IDs? What is the difference between an unchecked row, a removed row, and a named row with an empty value? Why use `append()` rather than overwriting an existing query name?
+
+### Git checkpoint 3
+
+Verification passed: all 39 request-service tests, the production build, and the desktop check. The desktop check covers parameter encoding, existing URL parameters, repeated names, adding/removing/disabling rows, blank rows, empty values, validation errors, the keyboard shortcut inside the editor, example resets, and the smaller-window layout.
+
+**Commit now.** This checkpoint is one feature: the query parameter editor, request construction and validation, demo echo output, verification, and learning notes.
+
+Message: `feat(requests): add query parameter editor`
+
+Include all changed files for this feature, including the new `src/components/QueryParamsEditor.jsx` file. Git does not include a new untracked file unless you select or add it.
+
+Next separate checkpoint: the request header editor.

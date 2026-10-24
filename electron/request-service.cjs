@@ -30,6 +30,22 @@ function validateRequest(request) {
   if (!SUPPORTED_METHODS.includes(request.method)) {
     throw new RequestError('INVALID_METHOD', 'Choose GET, POST, PUT, or DELETE.');
   }
+
+  const queryParams = request.queryParams === undefined ? [] : request.queryParams;
+  if (!Array.isArray(queryParams)) {
+    throw new RequestError('INVALID_PARAMS', 'Query parameters must be a list of name/value rows.');
+  }
+  for (const [index, param] of queryParams.entries()) {
+    if (!param || typeof param.key !== 'string' || typeof param.value !== 'string' || typeof param.enabled !== 'boolean') {
+      throw new RequestError('INVALID_PARAMS', `Query parameter ${index + 1} has an invalid name, value, or enabled flag.`);
+    }
+    if (!param.enabled || (param.key === '' && param.value === '')) continue;
+    if (!param.key.trim()) {
+      throw new RequestError('INVALID_PARAMS', `Query parameter ${index + 1} needs a name. Enter one or disable the row.`);
+    }
+    // append preserves repeated names and safely encodes spaces, &, +, and Unicode.
+    url.searchParams.append(param.key, param.value);
+  }
   return { url: url.href, method: request.method };
 }
 

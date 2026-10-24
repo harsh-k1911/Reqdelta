@@ -58,6 +58,55 @@ async function run() {
       assert.equal(echoed.method, selectedMethod);
     }
 
+    await method.selectOption('GET');
+    await url.fill(`${origin}/echo?tag=original&keep=1`);
+    const addParam = page.getByRole('button', { name: 'Add parameter' });
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 1 name', exact: true }).fill('q');
+    await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).fill('tea & coffee + café');
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 2 name', exact: true }).fill('tag');
+    await page.getByRole('textbox', { name: 'Parameter 2 value', exact: true }).fill('second');
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 3 name', exact: true }).fill('ignored');
+    await page.getByRole('textbox', { name: 'Parameter 3 value', exact: true }).fill('disabled value');
+    await page.getByRole('checkbox', { name: 'Enable parameter 3', exact: true }).uncheck();
+    await addParam.click(); // A completely blank row should not add a parameter.
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    assert.deepEqual(JSON.parse(await page.locator('#response-body').innerText()).queryParams, [
+      { key: 'tag', value: 'original' },
+      { key: 'keep', value: '1' },
+      { key: 'q', value: 'tea & coffee + café' },
+      { key: 'tag', value: 'second' },
+    ]);
+    await page.screenshot({ path: 'test-results/desktop-query-params.png' });
+
+    await page.getByRole('button', { name: 'Remove parameter 1', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: 'Parameter 1 name', exact: true }).inputValue(), 'tag');
+    assert.equal(await page.getByRole('checkbox', { name: 'Enable parameter 2', exact: true }).isChecked(), false);
+    await page.getByRole('textbox', { name: 'Parameter 3 value', exact: true }).fill('missing name');
+    await send.click();
+    await page.getByRole('alert').filter({ hasText: 'Query parameter 3 needs a name' }).waitFor();
+    await page.getByRole('textbox', { name: 'Parameter 3 name', exact: true }).fill('empty');
+    const emptyValue = page.getByRole('textbox', { name: 'Parameter 3 value', exact: true });
+    await emptyValue.fill('');
+    await emptyValue.press('Meta+Enter');
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    assert.deepEqual(JSON.parse(await page.locator('#response-body').innerText()).queryParams, [
+      { key: 'tag', value: 'original' },
+      { key: 'keep', value: '1' },
+      { key: 'tag', value: 'second' },
+      { key: 'empty', value: '' },
+    ]);
+
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    await page.screenshot({ path: 'test-results/desktop-query-params-small.png' });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: /^Parameter \d+ name$/ }).count(), 0);
+
     await method.selectOption('POST');
     await url.fill(`${origin}/students/101`);
     await send.click();
@@ -90,7 +139,7 @@ async function run() {
     assert.equal(await send.isEnabled(), true);
 
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: isolated bridge, all four HTTP methods, 405 response, GET example reset, JSON, headers, raw view, text, 404, URL validation, keyboard shortcut, and connection failure.');
+    console.log('Desktop checks passed: query encoding, duplicate names, existing URL parameters, row add/remove/disable, empty values, validation, parameter keyboard shortcut, small-window layout, example reset, all four HTTP methods, response viewing, and connection errors.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

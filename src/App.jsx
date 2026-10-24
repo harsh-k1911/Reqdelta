@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Icon from './components/Icon.jsx';
 import ResponsePanel from './components/ResponsePanel.jsx';
+import QueryParamsEditor from './components/QueryParamsEditor.jsx';
 
 const DEMO_ORIGIN = 'http://127.0.0.1:3030';
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
@@ -14,6 +15,7 @@ const examples = [
 export default function App() {
   const [url, setUrl] = useState(`${DEMO_ORIGIN}/students/101`);
   const [method, setMethod] = useState('GET');
+  const [queryParams, setQueryParams] = useState([]);
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
   const [error, setError] = useState(null);
@@ -27,7 +29,7 @@ export default function App() {
     try {
       if (!window.reqdelta) throw new Error('Open ReqDelta in the desktop app to send requests.');
       // This calls preload, which forwards a message to the main process.
-      const result = await window.reqdelta.sendRequest({ method, url });
+      const result = await window.reqdelta.sendRequest({ method, url, queryParams });
       if (result.ok) setResponse(result.response);
       else setError(result.error.message);
     } catch (error) {
@@ -40,6 +42,13 @@ export default function App() {
   function chooseExample({ path, method: exampleMethod }) {
     setUrl(`${DEMO_ORIGIN}${path}`);
     if (exampleMethod) setMethod(exampleMethod);
+    setQueryParams([]);
+    setError(null);
+    setResponse(null);
+  }
+
+  function handleParamsChange(params) {
+    setQueryParams(params);
     setError(null);
     setResponse(null);
   }
@@ -79,8 +88,9 @@ export default function App() {
                 <input aria-label="Request URL" type="text" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/students" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={loading} />
                 <button className="send-button" type="submit" disabled={loading}>{loading ? <><span className="spinner" /> Sending</> : <>Send request <Icon name="arrow" size={18} /></>}</button>
               </div>
+              <div className="request-help"><span><span className="subtle-dot" /> HTTP {method} · No request body</span><kbd>⌘ Enter</kbd></div>
+              <QueryParamsEditor params={queryParams} onChange={handleParamsChange} disabled={loading} />
             </form>
-            <div className="request-help"><span><span className="subtle-dot" /> HTTP {method} · No request body</span><kbd>⌘ Enter</kbd></div>
           </section>
 
           <div className="examples"><span>TRY A LOCAL EXAMPLE</span>{examples.map((example) => <button type="button" key={example.path} onClick={() => chooseExample(example)} disabled={loading}>{example.name}<Icon name="arrow" size={13} /></button>)}<span className="demo-hint">Demo API must be running</span></div>

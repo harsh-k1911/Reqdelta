@@ -6,7 +6,11 @@ function createDemoServer() {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
     // Echo the method without changing data, so every supported method is easy to try.
     if (url.pathname === '/echo') {
-      response.end(JSON.stringify({ method: request.method, path: url.pathname }));
+      response.end(JSON.stringify({
+        method: request.method,
+        path: url.pathname,
+        queryParams: Array.from(url.searchParams, ([key, value]) => ({ key, value })),
+      }));
       return;
     }
     if (request.method !== 'GET') {
