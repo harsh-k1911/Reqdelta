@@ -2,6 +2,7 @@ const { performance } = require('node:perf_hooks');
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const SUPPORTED_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
 
 class RequestError extends Error {
   constructor(code, message) {
@@ -26,10 +27,10 @@ function validateRequest(request) {
   if (url.username || url.password) {
     throw new RequestError('INVALID_URL', 'URLs containing usernames or passwords are not supported.');
   }
-  if (request.method !== 'GET') {
-    throw new RequestError('INVALID_METHOD', 'This milestone supports GET requests.');
+  if (!SUPPORTED_METHODS.includes(request.method)) {
+    throw new RequestError('INVALID_METHOD', 'Choose GET, POST, PUT, or DELETE.');
   }
-  return url.href;
+  return { url: url.href, method: request.method };
 }
 
 async function readBody(response, controller, maxBytes) {
@@ -60,11 +61,11 @@ async function executeRequest(request, options = {}) {
   const controller = new AbortController();
   let timer;
   try {
-    const url = validateRequest(request);
+    const { url, method } = validateRequest(request);
     const startedAt = performance.now();
     // The timeout covers downloading the body as well as receiving headers.
     timer = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow' });
+    const response = await fetch(url, { method, signal: controller.signal, redirect: 'follow' });
     const { body, sizeBytes } = await readBody(response, controller, maxBytes);
     let format = 'text';
     try {
@@ -76,7 +77,7 @@ async function executeRequest(request, options = {}) {
     return {
       ok: true,
       response: {
-        method: 'GET',
+        method,
         url: response.url || url,
         status: response.status,
         statusText: response.statusText,

@@ -3,14 +3,17 @@ import Icon from './components/Icon.jsx';
 import ResponsePanel from './components/ResponsePanel.jsx';
 
 const DEMO_ORIGIN = 'http://127.0.0.1:3030';
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
 const examples = [
-  { name: 'Student JSON', path: '/students/101' },
-  { name: 'Plain text', path: '/text' },
-  { name: '404 response', path: '/status/404' },
+  { name: 'Student JSON', path: '/students/101', method: 'GET' },
+  { name: 'Plain text', path: '/text', method: 'GET' },
+  { name: '404 response', path: '/status/404', method: 'GET' },
+  { name: 'Method echo', path: '/echo' },
 ];
 
 export default function App() {
   const [url, setUrl] = useState(`${DEMO_ORIGIN}/students/101`);
+  const [method, setMethod] = useState('GET');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
   const [error, setError] = useState(null);
@@ -24,7 +27,7 @@ export default function App() {
     try {
       if (!window.reqdelta) throw new Error('Open ReqDelta in the desktop app to send requests.');
       // This calls preload, which forwards a message to the main process.
-      const result = await window.reqdelta.sendRequest({ method: 'GET', url });
+      const result = await window.reqdelta.sendRequest({ method, url });
       if (result.ok) setResponse(result.response);
       else setError(result.error.message);
     } catch (error) {
@@ -34,8 +37,9 @@ export default function App() {
     }
   }
 
-  function chooseExample(path) {
+  function chooseExample({ path, method: exampleMethod }) {
     setUrl(`${DEMO_ORIGIN}${path}`);
+    if (exampleMethod) setMethod(exampleMethod);
     setError(null);
     setResponse(null);
   }
@@ -64,12 +68,22 @@ export default function App() {
                 event.currentTarget.requestSubmit();
               }
             }}>
-              <div className="request-bar"><span className="method-label">GET</span><input aria-label="Request URL" type="text" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/students" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={loading} /><button className="send-button" type="submit" disabled={loading}>{loading ? <><span className="spinner" /> Sending</> : <>Send request <Icon name="arrow" size={18} /></>}</button></div>
+              <div className="request-bar">
+                <select className="method-select" aria-label="HTTP method" data-method={method} value={method} disabled={loading} onChange={(event) => {
+                  setMethod(event.target.value);
+                  setError(null);
+                  setResponse(null);
+                }}>
+                  {HTTP_METHODS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+                <input aria-label="Request URL" type="text" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/students" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={loading} />
+                <button className="send-button" type="submit" disabled={loading}>{loading ? <><span className="spinner" /> Sending</> : <>Send request <Icon name="arrow" size={18} /></>}</button>
+              </div>
             </form>
-            <div className="request-help"><span><span className="subtle-dot" /> HTTP GET · No request body</span><kbd>⌘ Enter</kbd></div>
+            <div className="request-help"><span><span className="subtle-dot" /> HTTP {method} · No request body</span><kbd>⌘ Enter</kbd></div>
           </section>
 
-          <div className="examples"><span>TRY A LOCAL EXAMPLE</span>{examples.map((example) => <button type="button" key={example.path} onClick={() => chooseExample(example.path)} disabled={loading}>{example.name}<Icon name="arrow" size={13} /></button>)}<span className="demo-hint">Demo API must be running</span></div>
+          <div className="examples"><span>TRY A LOCAL EXAMPLE</span>{examples.map((example) => <button type="button" key={example.path} onClick={() => chooseExample(example)} disabled={loading}>{example.name}<Icon name="arrow" size={13} /></button>)}<span className="demo-hint">Demo API must be running</span></div>
 
           {error && <div className="error-banner" role="alert"><Icon name="alert" size={20} /><div><strong>Request could not be completed</strong><p>{error}</p></div></div>}
           <ResponsePanel response={response} loading={loading} />

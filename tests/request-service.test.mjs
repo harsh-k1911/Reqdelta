@@ -16,7 +16,23 @@ describe('request execution', () => {
 
   it('validates data in the main service even when the UI is bypassed', async () => {
     expect((await executeRequest(null)).error.code).toBe('INVALID_URL');
-    expect((await executeRequest({ ...request, method: 'POST' })).error.code).toBe('INVALID_METHOD');
+    expect((await executeRequest({ ...request, method: 'TRACE' })).error.code).toBe('INVALID_METHOD');
+  });
+
+  it.each(['GET', 'POST', 'PUT', 'DELETE'])('sends the chosen %s method to fetch and records it in the result', async (method) => {
+    const fetchMock = vi.fn(async () => new Response('{"message":"received"}'));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await executeRequest({ ...request, method });
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(request.url, expect.objectContaining({ method }));
+    expect(result.response.method).toBe(method);
+  });
+
+  it.each(['TRACE', 'CONNECT', 'PATCH', 'get', null])('rejects an unsupported method before making a network call: %s', async (method) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect((await executeRequest({ ...request, method })).error.code).toBe('INVALID_METHOD');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns JSON, headers, actual UTF-8 bytes, and total duration', async () => {

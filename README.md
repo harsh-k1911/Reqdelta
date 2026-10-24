@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: a working desktop GET request workflow.** Collections, SQLite history, other HTTP methods, and JSON comparison are planned next; they are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: desktop requests with GET, POST, PUT, and DELETE.** Query/header editors, request bodies, collections, SQLite history, and JSON comparison are planned next; they are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
@@ -26,14 +26,17 @@ In a second terminal, open the desktop application:
 npm run dev
 ```
 
-Press **Send request**. The default URL retrieves a student from the local demo API. You can also enter any HTTP/HTTPS GET URL, including query parameters in the URL. These requests are real network calls.
+Press **Send request**. The default URL retrieves a student from the local demo API. You can enter an HTTP/HTTPS URL, including query parameters in the URL, and select GET, POST, PUT, or DELETE. These requests are real network calls. Request bodies and custom headers are not supported yet, so endpoints that require them can return an HTTP error for now.
+
+To practise choosing methods, click **Method echo**, select a method, and send. The local `/echo` endpoint reports the method it received without changing any data. The other example buttons reset the method to GET.
 
 React changes update while the app is running. Restart `npm run dev` after changing Electron's main process or preload file. Use Control+C to stop the development process or demo server. On macOS, closing the last window leaves the app running; use Command+Q to quit it.
 
 ## What works now
 
 - A real Electron desktop window with a React interface.
-- GET requests through the main process and an isolated preload bridge.
+- GET, POST, PUT, and DELETE requests through the main process and an isolated preload bridge.
+- A method selector with main-process validation of supported methods.
 - Response status, total request duration, body size, and response headers.
 - Pretty/raw JSON and plain-text viewing. Response HTML is displayed as text.
 - Invalid URL, connection failure, 15-second timeout, and a 2 MiB response viewing limit.
@@ -52,6 +55,9 @@ No request or response data is saved by this milestone. Avoid real credentials d
 | `http://127.0.0.1:3030/text` | Non-JSON response |
 | `http://127.0.0.1:3030/status/404` | An HTTP error response with a body |
 | `http://127.0.0.1:3030/slow` | Takes 20 seconds, so the client times out first |
+| `http://127.0.0.1:3030/echo` | Reports the received HTTP method for GET, POST, PUT, or DELETE |
+
+The other demo endpoints accept GET only. Sending a different supported method to them returns `405 Method Not Allowed` with an `Allow: GET` response header. The `/echo` endpoint demonstrates the method sent; it does not create, replace, or delete a student.
 
 If the default request fails, check that `npm run demo` is running. If port 3030 is already occupied, stop that process or change the demo server port and the URL you enter. Port 5173 is reserved for the development interface.
 

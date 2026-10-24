@@ -12,10 +12,10 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .65; }
-button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid #6f8d4b; outline-offset: 3px; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid #6f8d4b; outline-offset: 3px; }
 button { transition: background .15s, color .15s; }
 .app-shell { display: flex; height: 100vh; min-height: 640px; }
 .sidebar { width: 218px; flex-shrink: 0; background: #eeefe8; border-right: 1px solid #dde1d5; display: flex; flex-direction: column; padding: 0 18px; }
@@ -53,7 +53,11 @@ h2 { font-size: 12px; font-weight: 600; margin: 0; }
 .request-limit { color: #929b88; font-size: 9px; }
 .request-bar { display: flex; align-items: center; border: 1px solid #d8e0cd; background: #fbfcf9; border-radius: 7px; padding: 5px; gap: 10px; }
 .request-bar:focus-within { border-color: #859f6c; box-shadow: 0 0 0 3px #8fa66d14; }
-.method-label { padding: 0 15px; font-size: 11px; font-family: var(--mono); font-weight: 700; color: #668843; border-right: 1px solid #e0e5d9; line-height: 25px; }
+.method-select { width: 90px; flex-shrink: 0; padding: 5px 8px; font: 700 11px var(--mono); color: #668843; background: transparent; border: 0; border-right: 1px solid #e0e5d9; border-radius: 0; cursor: pointer; }
+.method-select[data-method='POST'] { color: #9b752f; }
+.method-select[data-method='PUT'] { color: #507b9b; }
+.method-select[data-method='DELETE'] { color: #a85e50; }
+.method-select:disabled { cursor: wait; opacity: .65; }
 .request-bar input { border: none; flex: 1; min-width: 0; background: transparent; color: #3d4936; height: 36px; font: 11px var(--mono); outline: none; }
 .request-bar input:focus-visible { outline: none; }
 .send-button { display: flex; align-items: center; gap: 15px; justify-content: center; border: 1px solid #344c36; border-radius: 5px; color: #edf5e5; background: #344c36; height: 36px; font-size: 11px; padding: 0 15px; white-space: nowrap; font-weight: 500; min-width: 137px; }
@@ -119,7 +123,7 @@ kbd { font-family: inherit; color: #9da594; font-size: 9px; }
   .titlebar { padding: 0 25px; }
   .demo-hint, .milestone-badge { display: none; }
   .request-bar { gap: 5px; }
-  .method-label { padding: 0 10px; }
+  .method-select { width: 86px; padding: 5px 6px; }
   .send-button { min-width: 125px; padding: 0 10px; gap: 10px; }
 }
 @media (max-height: 740px) {

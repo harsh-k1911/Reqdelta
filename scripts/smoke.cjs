@@ -32,6 +32,7 @@ async function run() {
     assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest']);
 
     const url = page.getByRole('textbox', { name: 'Request URL' });
+    const method = page.getByRole('combobox', { name: 'HTTP method' });
     const send = page.getByRole('button', { name: 'Send request' });
     await url.fill(`${origin}/students/101`);
     await send.click();
@@ -45,6 +46,25 @@ async function run() {
     await page.getByRole('button', { name: 'Raw', exact: true }).click();
     await fs.mkdir('test-results', { recursive: true });
     await page.screenshot({ path: 'test-results/desktop-response.png' });
+
+    for (const selectedMethod of ['GET', 'POST', 'PUT', 'DELETE']) {
+      await method.selectOption(selectedMethod);
+      await page.getByRole('button', { name: 'Method echo', exact: true }).click();
+      assert.equal(await method.inputValue(), selectedMethod);
+      await url.fill(`${origin}/echo`);
+      await send.click();
+      await page.locator('#response-body').filter({ hasText: `"method": "${selectedMethod}"` }).waitFor();
+      const echoed = JSON.parse(await page.locator('#response-body').innerText());
+      assert.equal(echoed.method, selectedMethod);
+    }
+
+    await method.selectOption('POST');
+    await url.fill(`${origin}/students/101`);
+    await send.click();
+    await page.getByText('405 Method Not Allowed', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('alert').count(), 0);
+    await page.getByRole('button', { name: 'Plain text', exact: true }).click();
+    assert.equal(await method.inputValue(), 'GET');
 
     await url.fill(`${origin}/text`);
     await send.click();
@@ -70,7 +90,7 @@ async function run() {
     assert.equal(await send.isEnabled(), true);
 
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: isolated bridge, JSON, headers, raw view, text, 404, URL validation, keyboard shortcut, and connection failure.');
+    console.log('Desktop checks passed: isolated bridge, all four HTTP methods, 405 response, GET example reset, JSON, headers, raw view, text, 404, URL validation, keyboard shortcut, and connection failure.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

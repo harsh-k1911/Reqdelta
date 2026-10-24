@@ -9,6 +9,7 @@
 - The final demonstration needs all five core features. The current foundation alone is not the completed college project.
 - You make Git commits and push to GitHub manually. At each small, working checkpoint, the assistant says **Commit now**, supplies a Conventional Commit message, and identifies the files to include. It does not run Git mutations, commits, or pushes.
 - The GitHub destination is `https://github.com/harsh-k1911/Reqdelta.git`. Use frequent, meaningful commits as features grow, rather than collecting the whole project into one final commit.
+- Finish one narrow feature per checkpoint and stop for your manual commit before changing the next feature. Include the feature's tests and learning notes in the same commit.
 
 ## Ten-hour working budget
 
@@ -41,7 +42,7 @@ CommonJS and TypeScript describe different things. CommonJS is the `require()` /
 
 1. In `src/App.jsx`, pressing Send submits the form and calls `handleSend`.
 2. `setLoading(true)` causes React to render a disabled send button and a waiting state. `useState` holds this screen's current data.
-3. The UI calls `window.reqdelta.sendRequest({ method: 'GET', url })` and awaits the result. `await` pauses this function until its promise settles; it does not freeze the whole application.
+3. The UI calls `window.reqdelta.sendRequest({ method, url })` and awaits the result. The selected method starts as GET. `await` pauses this function until its promise settles; it does not freeze the whole application.
 4. In `electron/preload.cjs`, `ipcRenderer.invoke('requests:send', request)` sends a message to Electron's main process. IPC means inter-process communication.
 5. In `electron/main.cjs`, `ipcMain.handle('requests:send', ...)` receives that message. It checks the sender and then calls `executeRequest`.
 6. In `electron/request-service.cjs`, the service validates the URL, sends an HTTP GET request, reads the body, and returns a plain result object.
@@ -93,9 +94,9 @@ You have now changed the API's output and observed the client receiving it, with
 - Why does the `finally` block matter?
 - What information would we need to store to keep this response after quitting?
 
-## Next lesson
+## Remaining request-workflow lessons
 
-Extend the existing request object with method, headers, query parameters, and body. Keep the same UI → preload → main → service path. Teach the change at each layer before introducing SQLite.
+Extend the request object one feature at a time: method selection, a query parameter editor, a header editor, then a JSON body editor. Each feature gets its own working commit checkpoint. Keep the same UI → preload → main → service path. Teach the change at each layer before introducing SQLite.
 
 ## Git checkpoint 1
 
@@ -111,3 +112,50 @@ Do not include generated `node_modules/`, `dist/`, or `test-results/`; `.gitigno
 The message format is `type(scope): short description`. `feat` introduces behavior, `fix` corrects a bug, `docs` changes documentation, and `test` adds or improves tests. The scope names the area changed. A commit groups a meaningful change so you can explain or revisit it later; it does not need to correspond to one file.
 
 Git commits record changes locally. Pushing sends those commits to GitHub. You control both steps.
+
+## Lesson 2: choosing an HTTP method
+
+The URL identifies a resource; the method describes what the client wants to do with it. The four methods currently supported by ReqDelta are:
+
+| Method | Intended purpose |
+| --- | --- |
+| GET | Retrieve a resource's representation |
+| POST | Ask a resource to process submitted data, often creating something |
+| PUT | Create or replace a resource's representation at the target URL |
+| DELETE | Ask the server to remove the target resource's association |
+
+These are HTTP semantics. The API still needs to implement the operation, check permissions, and decide its response. Selecting DELETE does not itself guarantee that anything is deleted. See the [HTTP methods reference](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Methods).
+
+This checkpoint adds the method choice only. No request body is sent yet. A bodyless POST or PUT can be transmitted, but an API that needs submitted data may reject it. The JSON body editor will be a separate checkpoint.
+
+### Trace the change
+
+1. In `src/App.jsx`, `useState('GET')` holds the chosen method. The `<select>` gets its current value from that state, and `onChange` updates it. This is a **controlled input**: React state determines what the control displays.
+2. `handleSend` now passes `{ method, url }`. That is object shorthand for `{ method: method, url: url }`.
+3. Preload and main-process IPC already forward the whole request object. Their code does not need to change just because the method can vary.
+4. In `electron/request-service.cjs`, `SUPPORTED_METHODS.includes(request.method)` checks the method against a short allowed list. A dropdown improves the UI; validation in the main service still enforces the rule.
+5. `validateRequest` now returns `{ url, method }`. The line `const { url, method } = validateRequest(request)` extracts both properties using **object destructuring**.
+6. `fetch(url, { method, ... })` receives the actual selected method, and the result records that method too. It is no longer hardcoded to GET.
+7. In `scripts/demo-server.cjs`, `request.method` tells the demo API which method arrived. `/echo` returns that value as JSON without modifying stored data.
+
+The method list appears in both the UI and main service intentionally: the UI offers choices, while the service validates untrusted input independently. Unit checks verify service behavior; the desktop check verifies every dropdown option reaches the API correctly.
+
+### Practise it
+
+1. Restart the demo API and the desktop app so the changed main-process service is loaded.
+2. Click **Method echo**, choose POST, and send. Find `"method": "POST"` in the response.
+3. Repeat with PUT and DELETE. The selected method should reach the demo API each time.
+4. Enter the student URL while POST is selected, and send. You should see `405 Method Not Allowed`, with an `Allow: GET` header. This is the server rejecting a method for that endpoint, not a connection failure.
+5. Click **Student JSON**. Its example resets the method to GET; send again and inspect the student data.
+
+Checkpoint questions: What makes the selector a controlled input? Why validate the method in the main service as well? Why did the preload file stay unchanged? Why does `/echo` return a response for DELETE without deleting a student?
+
+### Git checkpoint 2
+
+Verification passed: all 25 request-service tests, the production build, and the desktop check sending all four methods to the local API. The desktop check also confirms the 405 response remains inspectable and GET example buttons reset the selected method.
+
+**Commit now** after verification. Include all changes for this feature: the method selector and styling, request service, demo API, request/desktop checks, and these documentation updates.
+
+Message: `feat(requests): support GET POST PUT and DELETE methods`
+
+Next separate checkpoint: add a query parameter editor.
