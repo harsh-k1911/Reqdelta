@@ -340,6 +340,8 @@ The basic request-building phase is complete. The SQLite storage foundation is c
 
 ## Lesson 6: SQLite storage foundation
 
+Schema note: this lesson describes the version 1 foundation at that checkpoint. Lesson 8 upgrades saved requests to version 2 with encrypted configuration storage. The current `db:demo` uses placeholder BLOB bytes for its made-up saved request; only Electron performs real encryption.
+
 React state is temporary: quitting the app loses the current screen data. SQLite writes records into a local database file, so they can be read by a later connection or app run. This checkpoint creates the database and its structure; the interface does not save requests or history yet.
 
 We use `require('node:sqlite')` in the main process. Electron has its own Node runtime, so testing SQLite in the terminal's Node alone was not enough. We checked the module in Electron 45's bundled Node 24.22 as well. See [Node's SQLite API](https://nodejs.org/api/sqlite.html).
@@ -451,10 +453,80 @@ Verification passed: all 134 tests, the production build, and the desktop check.
 
 Message: `feat(collections): add persistent collection creation and listing`
 
-Next checkpoint: save a request configuration into a collection and load it back into the request builder.
+Saving a configuration and loading it back into the request builder are covered in Lesson 8 below.
 
 ### Delivery question: does a desktop app need deployment?
 
 Your college accepts the app and its source code, so no hosted website is required. Packaging bundles the application with Electron into a macOS `.app` that runs without a development server; that is a later checkpoint. SQLite remains on the user's Mac. The demo API remains a separate local process, while requests to remote APIs need their usual network access. See [Electron application packaging](https://www.electronjs.org/docs/latest/tutorial/application-distribution).
 
 Public distribution adds signing and notarization work; that is separate from our current college delivery plan. See [Electron code signing](https://www.electronjs.org/docs/latest/tutorial/code-signing).
+
+## Lesson 8: save and restore request configurations
+
+A **request configuration** is the set of inputs needed to make a request: method, original URL, query rows, headers, and body mode/text. A **response** is what the server returns after execution. This checkpoint persists configurations only. Saving or opening one does not contact the API, and it does not save a response or create history.
+
+### The new database layout
+
+`saved_requests` still belongs to a collection through `collection_id`. Its readable columns are ID, collection ID, request name, HTTP method, and creation/update timestamps. The new `request_encrypted` column is a **BLOB**: a sequence of bytes containing the protected configuration.
+
+The original version 1 layout had separate plaintext URL/header/body fields. Those could contain credentials. Rather than trying to guess which header or JSON field is a secret, we protect the complete configuration. SQL can check the BLOB's type and size, but cannot inspect the encrypted JSON; the service validates the configuration before encryption and after decryption.
+
+`002-protected-requests.sql` creates the replacement table, removes the empty old one, renames the replacement, and recreates its collection index. `openDatabase` applies this inside the existing startup transaction and changes `PRAGMA user_version` to 2. Your collections keep their IDs and names. The first migration stays unchanged so older workspaces have a defined upgrade path.
+
+The previous interface could not save requests, so its saved-request table should be empty. If someone manually inserted version 1 request rows, a guard refuses the upgrade and preserves that file for manual conversion. It does not silently drop those rows. Both the normal collection-preserving upgrade and this refusal are tested. A version 2 file skips the migrations on later launches.
+
+### Follow Save to collection
+
+1. `src/App.jsx` continues to own the builder's method, URL, rows, and body. It passes the current configuration to `SaveRequestForm`. The child owns only its request name, collection choice, and save-form messages.
+2. Opening the save form loads the available collections. The form uses their IDs as option values and their names as labels. If there are none, saving is disabled and you can create one in the sidebar, then refresh the form's list.
+3. Submitting calls `window.reqdelta.createSavedRequest({ name, collectionId, request })`. The preload forwards it to `saved-requests:create`; the main handler checks the sender before calling the service.
+4. `electron/saved-requests-service.cjs` checks the collection ID/name and calls the shared `validateRequest` function. That function builds and validates HTTP inputs but does not execute `fetch`. Saving can therefore reject an invalid active JSON body or duplicate enabled header without contacting the API.
+5. `copyRequest` keeps only the supported fields, gives editor rows their own IDs, and checks a 2 MiB configuration limit. It preserves disabled rows and exact body text. It keeps the original URL separate from parameter rows: storing the validator's already-appended URL would append those rows again on the next send.
+6. `electron/secure-storage.cjs` serializes `{ version: 1, request }` with `JSON.stringify`, then asks Electron's asynchronous `safeStorage` API to encrypt that string. This payload format version is separate from the SQLite schema version.
+7. The service binds the resulting bytes into one `INSERT ... RETURNING` statement with the readable metadata. No URL, header value, or body text is passed into a plaintext SQL column.
+8. Only after the insert succeeds does React show the saved record, expand its collection, and refresh that collection's request list. The returned database ID identifies the saved request. Cancel save makes no insert, and a failure keeps your builder draft available.
+
+### Serialization and encryption do different jobs
+
+`JSON.stringify` converts a JavaScript object to text so it can be stored and reconstructed. It does **not** hide the data. Encryption turns that text into bytes that require the appropriate key to decrypt. Base64 encoding alone would not provide that protection either.
+
+We use macOS's existing protection through Electron, rather than implementing our own cryptography or storing an encryption key beside the database. The key is backed by the macOS Keychain. The asynchronous API keeps the operation promise-based; it is the current API in Electron 45. See [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage).
+
+There is no plaintext fallback if encryption is unavailable. Names and methods remain visible metadata, so do not put credentials into names. This protection applies to saved configuration bytes on disk; the running application must still hold the opened configuration in memory to let you edit and send it. Copying the database to another Mac/account does not copy the Keychain key. Packaged-build identity and signing are separate delivery checks.
+
+### Follow opening a saved request
+
+1. `CollectionsPanel` expands one collection and calls `listSavedRequests({ collectionId })`. This reads metadata only, so listing names does not need to decrypt every configuration.
+2. Clicking a request passes its permanent ID to `App`'s `handleOpenRequest`. The bridge calls `getSavedRequest({ id })`.
+3. The main service reads that row, decrypts its BLOB through the secure-storage adapter, parses the JSON, checks the payload version, and validates its request fields again. A missing or unreadable record returns a short error and is kept in place.
+4. `App` restores method, original URL, query rows, headers, and body together. It clears the previous response and returns the request tabs to Params. Press Send yourself to execute the restored configuration.
+5. Late sidebar replies are ignored when a collection changes. The list also tracks which collection its rows belong to, so switching groups cannot briefly display another group's requests.
+
+The editor row IDs are temporary UI identities; the saved request's database ID is the permanent record identity. They solve different problems. A disabled row stays disabled after loading even though editor row IDs can be regenerated.
+
+The native decryptor can also request re-encryption after a key change. The adapter returns replacement ciphertext in that case, and the service updates just that BLOB. A key refresh does not change the record's name, ID, or user-edit timestamp.
+
+### Editing does not overwrite the saved copy
+
+Once a request is opened, changes affect React's current draft. **Save as new** creates another database row, potentially with the same name but a different ID. The original stays intact. An explicit update operation will need its own handler and UI; we have not implemented one yet. Renaming and deleting saved requests are also pending.
+
+### Practise it
+
+1. Quit and restart the desktop app to load the new preload, handlers, and database migration. Your collections should remain.
+2. Start the demo API. Choose Method echo, select POST, add a query parameter and an `X-Demo-Client` header, choose JSON, and insert sample JSON.
+3. Choose Save request, name it `Student echo`, select `Student API`, and save. Notice that saving alone produces no response.
+4. Choose Student JSON to replace the current draft. Expand Student API and click Student echo. Confirm that POST, your rows, and your JSON draft return. Send to see the echoed inputs.
+5. Change a value, use Save as new, and give the new record another name. Reopen the first saved request and confirm its original value remains.
+6. Quit with Command+Q and reopen. Open the saved request again and explain where each restored field came from. Do not confuse the restored configuration with a stored response; responses are not persisted yet.
+
+Checkpoint questions: Why does saving share request validation but not execute a request? Why keep the original URL separate from extra rows? How does JSON serialization differ from encryption? Why can the sidebar list names without decrypting? Which ID identifies an editor row, and which identifies a stored request? Why does editing React state leave the original saved request unchanged?
+
+### Git checkpoint 8
+
+Verification passed: all 176 tests, the production build, the database exercise, and the desktop check. The desktop check uses real macOS encryption with made-up credentials, confirms those values are absent from database bytes, verifies no network execution during save/load, and restores a configuration after quitting and reopening. Tests also cover the version 1 collection upgrade, preservation of unexpected manually seeded data, validation, grouping, cancellation, disabled rows, exact body text, and the smaller-window layout.
+
+**Commit now** after completing the exercise. Include all changes for this feature, including the second migration, saved-request service, secure-storage adapter, save form, new tests, bridge/database changes, sidebar and App integration, styles, updated database exercise, desktop check, and documentation.
+
+Message: `feat(requests): save and restore encrypted request configurations`
+
+Next checkpoint: record execution history and inspect saved response snapshots.

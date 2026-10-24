@@ -7,6 +7,8 @@ const { createDemoServer } = require('./demo-server.cjs');
 
 async function run() {
   const server = createDemoServer();
+  let requestsReceived = 0;
+  server.on('request', () => { requestsReceived += 1; });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -30,7 +32,7 @@ async function run() {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection']);
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection', 'createSavedRequest', 'listSavedRequests', 'getSavedRequest']);
 
     const storage = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -46,11 +48,15 @@ async function run() {
       } finally { database.close(); }
     });
     assert.equal(storage.directory, path.resolve(userData));
-    assert.equal(storage.version, 1);
+    assert.equal(storage.version, 2);
     assert.deepEqual(storage.tables, ['collections', 'request_history', 'saved_requests']);
     assert.equal(storage.collections, 0);
 
     await page.getByText('No collections yet. Use + to create your first group.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Save request', exact: true }).click();
+    await page.getByText('Create a collection with + in the sidebar, then refresh this list.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Save to collection', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Cancel save', exact: true }).click();
     const newCollection = page.getByRole('button', { name: 'New collection', exact: true });
     const collectionName = page.getByRole('textbox', { name: 'Collection name', exact: true });
     const createCollection = page.getByRole('button', { name: 'Create collection', exact: true });
@@ -369,6 +375,111 @@ async function run() {
     await url.press('Meta+Enter');
     await page.getByText('200 OK', { exact: true }).waitFor();
 
+    // Save the builder's configuration without executing it. All secrets below
+    // are made-up fixtures, never real credentials from the user's workspace.
+    const studentCollectionId = createdCollections.collections.find((item) => item.name === 'Student API').id;
+    const otherCollectionId = createdCollections.collections.find((item) => item.name === "Harsh's café API 😀").id;
+    const savedUrl = `${origin}/echo?base=kept&api_key=demo-url-secret`;
+    const savedBody = '{\n  "student": "Harsh 😀",\n  "token": "demo-body-secret"\n}';
+    await page.getByRole('button', { name: 'Method echo', exact: true }).click();
+    await method.selectOption('POST');
+    await url.fill(savedUrl);
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 1 name', exact: true }).fill('tag');
+    await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).fill('extra & café');
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 2 name', exact: true }).fill('not-sent');
+    await page.getByRole('textbox', { name: 'Parameter 2 value', exact: true }).fill('disabled draft');
+    await page.getByRole('checkbox', { name: 'Enable parameter 2', exact: true }).uncheck();
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 1 name', exact: true }).fill('Authorization');
+    await page.getByRole('textbox', { name: 'Header 1 value', exact: true }).fill('Bearer demo-header-secret');
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 2 name', exact: true }).fill('X-Draft');
+    await page.getByRole('textbox', { name: 'Header 2 value', exact: true }).fill('not sent');
+    await page.getByRole('checkbox', { name: 'Enable header 2', exact: true }).uncheck();
+    await requestOptions.getByRole('tab', { name: 'Body', exact: true }).click();
+    await bodyType.selectOption('json');
+    await bodyInput.fill(savedBody);
+    await page.getByRole('button', { name: 'Save request', exact: true }).click();
+    const saveForm = page.getByRole('form', { name: 'Save request', exact: true });
+    const requestName = saveForm.getByRole('textbox', { name: 'Request name', exact: true });
+    const saveToCollection = saveForm.getByRole('button', { name: 'Save to collection', exact: true });
+    await saveForm.getByRole('combobox', { name: 'Collection', exact: true }).selectOption(String(studentCollectionId));
+    await requestName.fill('   ');
+    await saveToCollection.click();
+    await saveForm.getByRole('alert').filter({ hasText: 'request name' }).waitFor();
+    await requestName.fill('Student echo');
+    await bodyInput.fill('{broken');
+    await saveToCollection.click();
+    await saveForm.getByRole('alert').filter({ hasText: 'not valid JSON' }).waitFor();
+    await bodyInput.fill(savedBody);
+    const beforeSave = requestsReceived;
+    await saveToCollection.click();
+    await page.getByText('Request saved to your collection.', { exact: true }).waitFor();
+    assert.equal(requestsReceived, beforeSave);
+    const studentRequests = page.getByRole('list', { name: 'Requests in Student API', exact: true });
+    const studentEcho = studentRequests.getByRole('button', { name: /Student echo/ });
+    await studentEcho.waitFor();
+    const firstSaved = await page.evaluate((collectionId) => window.reqdelta.listSavedRequests({ collectionId }), studentCollectionId);
+    assert.equal(firstSaved.savedRequests.length, 1);
+    assert.equal(firstSaved.savedRequests[0].method, 'POST');
+    await page.screenshot({ path: 'test-results/desktop-saved-request.png' });
+
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    let savedEcho = JSON.parse(await page.locator('#response-body').innerText());
+    assert.equal(savedEcho.headers.authorization, 'Bearer demo-header-secret');
+    assert.equal(savedEcho.rawBody, savedBody);
+    assert.deepEqual(savedEcho.queryParams, [{ key: 'base', value: 'kept' }, { key: 'api_key', value: 'demo-url-secret' }, { key: 'tag', value: 'extra & café' }]);
+    await method.selectOption('DELETE');
+    await url.fill(`${origin}/text`);
+    await bodyType.selectOption('none');
+    const beforeLoad = requestsReceived;
+    await studentEcho.click();
+    await page.getByText('Request loaded. Press Send request when you are ready.', { exact: true }).waitFor();
+    assert.equal(requestsReceived, beforeLoad);
+    assert.equal(await method.inputValue(), 'POST');
+    assert.equal(await url.inputValue(), savedUrl);
+    assert.equal(await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).inputValue(), 'extra & café');
+    assert.equal(await page.getByRole('checkbox', { name: 'Enable parameter 2', exact: true }).isChecked(), false);
+    await page.getByText('No response yet', { exact: true }).waitFor();
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: 'Header 1 value', exact: true }).inputValue(), 'Bearer demo-header-secret');
+    assert.equal(await page.getByRole('checkbox', { name: 'Enable header 2', exact: true }).isChecked(), false);
+    await requestOptions.getByRole('tab', { name: 'Body', exact: true }).click();
+    assert.equal(await bodyType.inputValue(), 'json');
+    assert.equal(await bodyInput.inputValue(), savedBody);
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    savedEcho = JSON.parse(await page.locator('#response-body').innerText());
+    assert.equal(savedEcho.rawBody, savedBody);
+    assert.equal(savedEcho.queryParams.filter((item) => item.key === 'tag').length, 1);
+
+    await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
+    await url.fill(`${origin}/students/101?version=2`);
+    await page.getByRole('button', { name: 'Save request', exact: true }).click();
+    await requestName.fill('Student version 2');
+    await saveForm.getByRole('combobox', { name: 'Collection', exact: true }).selectOption(String(otherCollectionId));
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    await saveToCollection.scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: 'test-results/desktop-save-form-small.png' });
+    await saveToCollection.click();
+    await page.getByText('Request saved to your collection.', { exact: true }).waitFor();
+    const otherRequests = page.getByRole('list', { name: "Requests in Harsh's café API 😀", exact: true });
+    await otherRequests.getByRole('button', { name: /Student version 2/ }).waitFor();
+    assert.equal((await page.evaluate((collectionId) => window.reqdelta.listSavedRequests({ collectionId }), studentCollectionId)).savedRequests.length, 1);
+    assert.equal((await page.evaluate((collectionId) => window.reqdelta.listSavedRequests({ collectionId }), otherCollectionId)).savedRequests.length, 1);
+    await page.getByRole('button', { name: 'Save as new', exact: true }).click();
+    await requestName.fill('Do not save');
+    await saveForm.getByRole('button', { name: 'Cancel save', exact: true }).click();
+    assert.equal((await page.evaluate((collectionId) => window.reqdelta.listSavedRequests({ collectionId }), otherCollectionId)).savedRequests.length, 1);
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    const databaseBytes = await fs.readFile(path.join(userData, 'reqdelta.sqlite'));
+    for (const secret of ['demo-url-secret', 'demo-header-secret', 'demo-body-secret']) assert.equal(databaseBytes.includes(Buffer.from(secret)), false);
+
     await server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await send.click();
@@ -387,6 +498,17 @@ async function run() {
     await reopenedList.getByText('Student API', { exact: true }).waitFor();
     assert.deepEqual(await reopenedList.getByRole('listitem').allTextContents(), [...collectionNames].reverse());
     assert.deepEqual(await reopenedPage.evaluate(() => window.reqdelta.listCollections()), createdCollections);
+    await reopenedList.getByRole('button', { name: 'Student API', exact: true }).click();
+    await reopenedPage.getByRole('list', { name: 'Requests in Student API', exact: true }).getByRole('button', { name: /Student echo/ }).click();
+    await reopenedPage.getByText('Request loaded. Press Send request when you are ready.', { exact: true }).waitFor();
+    assert.equal(await reopenedPage.getByRole('textbox', { name: 'Request URL', exact: true }).inputValue(), savedUrl);
+    assert.equal(await reopenedPage.getByRole('combobox', { name: 'HTTP method', exact: true }).inputValue(), 'POST');
+    const restored = await reopenedPage.evaluate((id) => window.reqdelta.getSavedRequest({ id }), firstSaved.savedRequests[0].id);
+    assert.equal(restored.ok, true);
+    assert.equal(restored.savedRequest.request.body.text, savedBody);
+    assert.equal(restored.savedRequest.request.headers[0].value, 'Bearer demo-header-secret');
+    assert.equal(restored.savedRequest.request.queryParams[1].enabled, false);
+    await reopenedPage.getByText('No response yet', { exact: true }).waitFor();
     const persisted = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
       const path = process.getBuiltinModule('node:path');
@@ -401,9 +523,9 @@ async function run() {
         };
       } finally { database.close(); }
     });
-    assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 0, history: 0, version: 1 });
+    assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 2, history: 0, version: 2 });
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: collection creation/listing, validation and cancellation, smaller-window layout, UI persistence across an app restart, isolated SQLite storage, no automatic request/history writes yet, and the complete HTTP request workflow.');
+    console.log('Desktop checks passed: collections, encrypted request saving/loading, validation and cancellation, grouping, no execution during save/load, restored headers/parameters/body after an app restart, smaller-window layout, isolated SQLite storage, no automatic history yet, and the complete HTTP request workflow.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

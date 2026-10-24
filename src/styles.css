@@ -44,9 +44,21 @@ button { transition: background .15s, color .15s; }
 .collection-load-error { margin: 4px 8px; }
 .collection-load-error button { margin-top: 8px; }
 .collection-list { flex-shrink: 0; list-style: none; margin: 10px 0 0; padding: 0; }
-.collection-list li { display: flex; align-items: flex-start; gap: 9px; padding: 9px 8px; color: #56694a; font-size: 11px; line-height: 1.5; }
+.collection-list > li { padding: 0; color: #56694a; font-size: 11px; line-height: 1.5; }
 .collection-list svg { flex-shrink: 0; margin-top: 1px; color: #8a9b79; }
-.collection-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.collection-toggle { display: flex; align-items: flex-start; width: 100%; gap: 6px; padding: 9px 5px; border: 0; border-radius: 5px; color: inherit; background: transparent; text-align: left; font: inherit; }
+.collection-toggle > span { min-width: 0; overflow-wrap: anywhere; }
+.collection-toggle:hover:not(:disabled) { background: #e3e9dc; }
+.collection-toggle > svg:first-child { margin-top: 4px; }
+.collection-toggle[aria-expanded='true'] > svg:first-child { transform: rotate(90deg); }
+.saved-request-list { list-style: none; padding: 0 0 4px 13px; margin: 0; }
+.saved-request-list button { display: flex; align-items: flex-start; gap: 6px; width: 100%; border: 0; border-radius: 4px; background: transparent; text-align: left; padding: 8px 5px; color: #607254; font-size: 10px; line-height: 1.6; }
+.saved-request-list button > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.saved-request-list button:hover:not(:disabled), .saved-request-list button[aria-current='true'] { background: #e0e8d5; color: #344c36; }
+.saved-method { font: 8px/2 var(--mono); color: #668843; flex-shrink: 0; }
+.saved-method[data-method='POST'] { color: #9b752f; }
+.saved-method[data-method='PUT'] { color: #507b9b; }
+.saved-method[data-method='DELETE'] { color: #a85e50; }
 .collection-notice { color: #516c3e; margin-top: 8px; }
 .collection-notice:empty { display: none; }
 .collections-hint { margin: auto 8px 0; padding-top: 16px; }
@@ -72,6 +84,22 @@ h2 { font-size: 12px; font-weight: 600; margin: 0; }
 .request-topline h2 { display: flex; align-items: center; gap: 8px; color: #5d6954; }
 .request-topline h2 svg { color: #8a997b; }
 .request-limit { color: #929b88; font-size: 9px; }
+.request-topline h2 { min-width: 0; overflow-wrap: anywhere; }
+.request-topline h2 svg { flex-shrink: 0; }
+.request-top-actions { display: flex; align-items: center; gap: 13px; flex-shrink: 0; }
+.saved-draft-help { font-size: 9px; line-height: 1.6; color: #859477; margin: -6px 0 12px; }
+.save-request-form { margin-top: 17px; padding: 14px; border: 1px solid #dde5d3; border-radius: 7px; background: #f7f9f3; }
+.save-form-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.save-form-heading h3 { font-size: 12px; color: #516746; margin: 0; }
+.save-form-heading > span { font-size: 9px; color: #8a987d; }
+.save-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.save-fields label { min-width: 0; color: #6c7d5f; font-size: 10px; }
+.save-fields input, .save-fields select { display: block; width: 100%; min-width: 0; margin-top: 6px; border: 1px solid #d9e2ce; border-radius: 4px; background: #fff; color: #3e5634; padding: 8px; font-size: 11px; }
+.save-form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+.save-form-actions button { padding: 6px 9px; font-size: 10px; color: #637a52; border: 1px solid #dce4d2; border-radius: 4px; background: #fff; }
+.save-form-actions .save-primary { color: #f2f7eb; border-color: var(--green); background: var(--green); }
+.save-help { font-size: 10px; line-height: 1.6; color: #7b8c6f; margin: 10px 0 0; }
+.save-error { font-size: 11px; line-height: 1.6; color: #a04d3a; margin: 10px 0 0; overflow-wrap: anywhere; }
 .request-bar { display: flex; align-items: center; border: 1px solid #d8e0cd; background: #fbfcf9; border-radius: 7px; padding: 5px; gap: 10px; }
 .request-bar:focus-within { border-color: #859f6c; box-shadow: 0 0 0 3px #8fa66d14; }
 .method-select { width: 90px; flex-shrink: 0; padding: 5px 8px; font: 700 11px var(--mono); color: #668843; background: transparent; border: 0; border-right: 1px solid #e0e5d9; border-radius: 0; cursor: pointer; }

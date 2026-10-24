@@ -180,4 +180,4 @@ async function executeRequest(request, options = {}) {
   }
 }
 
-module.exports = { executeRequest };
+module.exports = { executeRequest, validateRequest, RequestError };

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 
-export default function CollectionsPanel() {
+export default function CollectionsPanel({ onOpenRequest, selectedRequest, refreshKey = 0, disabled = false }) {
   const [collections, setCollections] = useState([]);
   const [status, setStatus] = useState('loading');
   const [loadError, setLoadError] = useState('');
@@ -12,6 +12,42 @@ export default function CollectionsPanel() {
   const [createError, setCreateError] = useState('');
   const [notice, setNotice] = useState('');
   const newButton = useRef(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [requests, setRequests] = useState([]);
+  const [requestsStatus, setRequestsStatus] = useState('idle');
+  const [requestsForId, setRequestsForId] = useState(null);
+  const [requestsError, setRequestsError] = useState('');
+  const [requestsRetry, setRequestsRetry] = useState(0);
+  const selectedCollectionId = selectedRequest?.collectionId;
+  const visibleRequestsStatus = requestsForId === expandedId ? requestsStatus : 'loading';
+
+  useEffect(() => {
+    if (selectedCollectionId) setExpandedId(selectedCollectionId);
+  }, [selectedRequest?.id, selectedCollectionId]);
+
+  useEffect(() => {
+    if (expandedId === null) return;
+    let active = true;
+    setRequests([]);
+    setRequestsForId(expandedId);
+    setRequestsStatus('loading');
+    setRequestsError('');
+    async function load() {
+      try {
+        const result = await window.reqdelta.listSavedRequests({ collectionId: expandedId });
+        if (!active) return;
+        if (!result.ok) throw new Error(result.error.message);
+        setRequests(result.savedRequests);
+        setRequestsStatus('ready');
+      } catch (error) {
+        if (!active) return;
+        setRequestsError(error.message || 'Could not load saved requests. Try again.');
+        setRequestsStatus('error');
+      }
+    }
+    load();
+    return () => { active = false; };
+  }, [expandedId, refreshKey, requestsRetry]);
 
   useEffect(() => {
     let active = true;
@@ -90,10 +126,21 @@ export default function CollectionsPanel() {
       {status === 'ready' && (collections.length === 0
         ? <p className="collection-message">No collections yet. Use + to create your first group.</p>
         : <ul className="collection-list" aria-label="Collections">{collections.map((collection) => (
-          <li key={collection.id}><Icon name="layers" size={15} /><span title={collection.name}>{collection.name}</span></li>
+          <li key={collection.id}>
+            <button className="collection-toggle" type="button" aria-expanded={expandedId === collection.id} aria-controls={`collection-${collection.id}-requests`} disabled={disabled} onClick={() => setExpandedId((current) => current === collection.id ? null : collection.id)}>
+              <Icon name="chevron" size={11} /><Icon name="layers" size={15} /><span title={collection.name}>{collection.name}</span>
+            </button>
+            {expandedId === collection.id && <div id={`collection-${collection.id}-requests`}>
+              {visibleRequestsStatus === 'loading' && <p className="collection-message" role="status">Loading requests…</p>}
+              {visibleRequestsStatus === 'error' && <div className="collection-load-error"><p className="collection-error" role="alert">{requestsError}</p><button type="button" onClick={() => setRequestsRetry((current) => current + 1)}>Retry saved requests</button></div>}
+              {visibleRequestsStatus === 'ready' && (requests.length === 0 ? <p className="collection-message">No saved requests yet.</p> : <ul className="saved-request-list" aria-label={`Requests in ${collection.name}`}>
+                {requests.map((request) => <li key={request.id}><button type="button" aria-current={selectedRequest?.id === request.id ? 'true' : undefined} disabled={disabled} onClick={() => onOpenRequest(request.id)}><span className="saved-method" data-method={request.method}>{request.method}</span><span>{request.name}</span></button></li>)}
+              </ul>)}
+            </div>}
+          </li>
         ))}</ul>)}
       <p className="collection-notice" role="status">{notice}</p>
-      <p className="collections-hint">Collections stay on this Mac.<br />Saving requests comes next.</p>
+      <p className="collections-hint">Collections stay on this Mac.<br />Open a group to find its requests.</p>
     </section>
   );
 }

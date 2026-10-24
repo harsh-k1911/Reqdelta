@@ -1,9 +1,11 @@
-const { app, BrowserWindow, ipcMain, protocol, net, session, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, session, dialog, safeStorage } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { executeRequest } = require('./request-service.cjs');
 const { openDatabase } = require('./database.cjs');
 const { listCollections, createCollection } = require('./collections-service.cjs');
+const { createSecureStorage } = require('./secure-storage.cjs');
+const { createSavedRequestsService } = require('./saved-requests-service.cjs');
 
 const APP_URL = 'reqdelta://app/index.html';
 const DEV_URL = !app.isPackaged && process.env.REQDELTA_DEV_URL;
@@ -99,6 +101,19 @@ app.whenReady().then(() => {
   ipcMain.handle('collections:create', (event, input) => {
     if (!isTrustedSender(event)) return forbidden();
     return createCollection(database, input);
+  });
+  const savedRequests = createSavedRequestsService(database, createSecureStorage(safeStorage));
+  ipcMain.handle('saved-requests:create', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return savedRequests.create(input);
+  });
+  ipcMain.handle('saved-requests:list', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return savedRequests.list(input);
+  });
+  ipcMain.handle('saved-requests:get', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return savedRequests.get(input);
   });
 
   createWindow();

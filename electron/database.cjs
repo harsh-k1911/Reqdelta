@@ -2,7 +2,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { mkdirSync, readFileSync } = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function openDatabase(filename) {
   if (filename !== ':memory:') mkdirSync(path.dirname(filename), { recursive: true });
@@ -21,6 +21,15 @@ function openDatabase(filename) {
         const schema = readFileSync(path.join(__dirname, 'migrations', '001-initial.sql'), 'utf8');
         database.exec(schema);
         database.exec('PRAGMA user_version = 1;');
+      }
+      if (version < 2) {
+        // Real request saving starts at v2. Preserve unexpected manually seeded
+        // v1 requests instead of dropping records we cannot safely convert here.
+        if (database.prepare('SELECT count(*) AS total FROM saved_requests').get().total > 0) {
+          throw new Error('This version 1 database contains manually inserted requests. Its data was preserved; migrate those records before upgrading.');
+        }
+        database.exec(readFileSync(path.join(__dirname, 'migrations', '002-protected-requests.sql'), 'utf8'));
+        database.exec('PRAGMA user_version = 2;');
       }
       database.exec('COMMIT;');
     } catch (error) {

@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: the HTTP request builder and persistent collections.** You can create and list collections in the sidebar, and they survive app restarts. Saving requests/history from the interface and JSON comparison are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: the HTTP request builder, collections, and encrypted saved requests.** You can save a configuration into a collection and load it after an app restart. Automatic execution history and JSON comparison are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
@@ -52,9 +52,29 @@ React changes update while the app is running. Restart `npm run dev` after chang
 
 Click **+** beside **Collections**, enter a name such as `Student API`, and choose **Create collection** or press Enter. The main process trims surrounding whitespace, requires 1–100 Unicode code points, and rejects null characters. The new collection appears at the top of the sidebar after SQLite confirms the insert. Names are plain text, and duplicate names are allowed as separate records.
 
-Choose **Cancel** to discard the name without writing anything. Quit with Command+Q and reopen the app to check that your created collection is still listed. Collection creation works without the demo API running. Saving a request into a collection is the next separate checkpoint; the current list shows collection names only. Renaming and deleting collections are not implemented yet.
+Choose **Cancel** to discard the name without writing anything. Quit with Command+Q and reopen the app to check that your created collection is still listed. Collection creation works without the demo API running. Click a collection to expand its saved requests. Renaming and deleting collections are not implemented yet.
 
 Loading and creation failures have separate messages so a storage problem does not appear as an HTTP failure. A failed list load offers **Retry collections**.
+
+## Save and open a request
+
+Configure the request builder, choose **Save request**, enter a request name, choose a collection, and select **Save to collection**. If you just created a collection while the form was open, choose **Refresh collections**. Cancel save leaves the builder alone and writes nothing.
+
+Saving requires a valid URL, supported method, valid enabled headers/parameters, and valid JSON when JSON mode is selected. It checks the configuration without sending an HTTP request. The saved copy includes the original URL, extra query/header rows (including disabled rows), and the exact body text. None mode can retain an unfinished body draft. The entire configuration has a 2 MiB UTF-8 limit, alongside the existing 1 MiB limit for an active JSON body.
+
+Expand the collection and click the named request to restore it into the builder. Opening clears the old response and does not send the request. Press **Send request** when ready. The original URL and additional parameter rows remain separate, so loading does not duplicate query parameters.
+
+Editing the loaded builder changes a temporary copy. **Save as new** creates another saved record; it does not overwrite the original. Names may be duplicated because IDs identify the actual records. Updating and deleting saved requests are not implemented yet.
+
+Quit with Command+Q, reopen, expand the collection, and open the saved request again. The demo API is only needed when you actually send to one of its endpoints.
+
+### Protecting request contents
+
+On macOS, the main process serializes the entire configuration and encrypts it using Electron's asynchronous `safeStorage` API, backed by the macOS Keychain. The SQLite `request_encrypted` BLOB contains ciphertext. URLs, query values, header credentials, disabled drafts, and body text are inside that protected payload. Collection/request names, HTTP methods, IDs, and timestamps remain readable metadata; keep credentials out of names. See [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage).
+
+There is no plaintext fallback. If secure storage is unavailable, saving fails and your draft remains available. If a saved payload cannot be decrypted, its record is kept and an error appears without replacing the current builder. Listing names does not decrypt the configurations. This feature currently supports macOS only.
+
+This is protection for local storage, not a portable export or a guarantee against a compromised running app. Copying the database to another Mac/account does not copy its Keychain key. Development and packaged builds can also differ in app identity; packaging verification will check this separately. Unsigned builds may prompt for Keychain access again when their identity changes. History and response persistence are still pending and store no real interface executions yet.
 
 ## What works now
 
@@ -74,8 +94,10 @@ Loading and creation failures have separate messages so a storage problem does n
 - An offline demo API and automated request/desktop checks.
 - SQLite database creation, schema versioning, foreign keys, and connection cleanup on app quit.
 - Collection creation and listing through validated main-process operations, with persistence across app restarts.
+- Saving and opening request configurations grouped by collection, protected with macOS-backed encryption.
+- Restoration of methods, original URLs, query/header rows, enabled flags, body modes, and exact body drafts.
 
-The first startup creates empty storage tables. Collection names entered in the interface are now written to SQLite. Requests and responses from the interface are not yet stored; those connections will be added in later checkpoints.
+The first startup creates empty storage tables. Collections and explicitly saved request configurations are now written to SQLite. Response snapshots and automatic execution history from the interface are not yet stored.
 
 ## SQLite storage foundation
 
@@ -84,12 +106,14 @@ The main process opens `reqdelta.sqlite` in Electron's `app.getPath('userData')`
 | Table | Prepared for |
 | --- | --- |
 | `collections` | Named groups of saved requests |
-| `saved_requests` | Request configuration linked to a collection |
+| `saved_requests` | Readable request metadata and an encrypted configuration linked to a collection |
 | `request_history` | Separate execution snapshots linked optionally to a saved request |
 
-Schema version 1 is applied in a transaction the first time the file opens. Later opens read the version instead of recreating the tables. Failed setup rolls back, and a database with a newer schema version is rejected without resetting it. A startup error shows a message and quits the app; it does not delete the database.
+The current schema version is 2. A fresh file applies the original migration and then the encrypted-request migration in one transaction. A version 1 workspace from the previous checkpoint upgrades while retaining its collections. Version 2 opens skip those migrations. Failed setup rolls back, and a database with a newer schema version is rejected without resetting it. A startup error shows a message and quits the app; it does not delete the database.
 
-The database connection stays in the main process. The preload exposes only `sendRequest`, `listCollections`, and `createCollection`. Each main-process handler checks the sender. The renderer has no direct database or arbitrary SQL access. Collection inserts use bound values rather than building SQL from user input. This feature uses the existing version 1 schema, so no new migration is needed.
+Version 1 had no request-saving interface. The second migration replaces its empty saved-request table with the encrypted layout. As a preservation guard, if someone manually seeded version 1 request rows, the upgrade stops and retains that database for manual conversion; it does not drop those records. The old `db:demo` exercise used its own temporary file, not your app workspace.
+
+The database connection and encryption operations stay in the main process. The six preload functions are `sendRequest`, `listCollections`, `createCollection`, `createSavedRequest`, `listSavedRequests`, and `getSavedRequest`. Each handler checks the sender. The renderer has no direct database, arbitrary SQL, or general-purpose encryption access. Inserts and lookups bind values separately from SQL text.
 
 Run the learning exercise:
 
@@ -97,7 +121,7 @@ Run the learning exercise:
 npm run db:demo
 ```
 
-It creates a fresh temporary database, inserts made-up collection/request/history records using prepared statements, closes the database, reopens it, and reads the records back. It prints the temporary file location for inspection. It makes no HTTP calls and does not use your app workspace database. Each run uses a new temporary file.
+It creates a fresh temporary database, inserts made-up collection/request/history records using prepared statements, closes the database, reopens it, and reads the records back. The saved request uses opaque placeholder bytes to demonstrate a BLOB; real encryption happens only in Electron. It prints the temporary file location for inspection. It makes no HTTP calls and does not use your app workspace database. Each run uses a new temporary file.
 
 Local `.sqlite`/`.db` files and their journal files are excluded by `.gitignore`; commit the migration SQL and application code.
 
@@ -132,7 +156,7 @@ npm start
 npm run test:desktop
 ```
 
-The desktop test opens Electron using a temporary profile and creates collections through the actual interface. It checks validation, cancellation, plain-text rendering, and the smaller-window layout, then checks the complete HTTP workflow against a local API. It quits and reopens the app to confirm that the same collection records load into the sidebar. Request/history writes are not connected yet. Screenshots are saved under `test-results/`. No external API is needed.
+The desktop test opens Electron using a temporary profile and creates collections and saved requests through the actual interface. It checks validation, cancellation, grouping, the smaller-window layout, real macOS encryption, and the complete HTTP workflow against a local API. It confirms that save/open actions make no HTTP calls and that made-up secret fixtures are absent from database bytes. It quits and reopens the app, then opens a saved request to verify its restored configuration. Automatic history is not connected yet. Screenshots are saved under `test-results/`. No external API or real API credentials are needed. The first native encryption operation may request Keychain access.
 
 ## College delivery
 
@@ -145,16 +169,20 @@ Signing and notarizing for public macOS distribution are a separate release task
 | File | Responsibility |
 | --- | --- |
 | `electron/main.cjs` | Desktop window, local interface loading, SQLite lifecycle, trusted IPC handlers |
-| `electron/preload.cjs` | Exposes the three approved request/collection operations on `window.reqdelta` |
+| `electron/preload.cjs` | Exposes the six approved request/collection operations on `window.reqdelta` |
 | `electron/request-service.cjs` | Validates requests, fetches responses, limits size/time, returns results |
 | `electron/collections-service.cjs` | Validates collection names and inserts/lists rows with prepared SQL |
-| `electron/database.cjs` | Opens SQLite, applies the initial migration transactionally, and checks the schema version |
+| `electron/saved-requests-service.cjs` | Validates, saves, lists, and restores request configurations without executing them |
+| `electron/secure-storage.cjs` | Serializes configurations and delegates encryption/decryption to macOS through Electron |
+| `electron/database.cjs` | Opens SQLite, applies pending migrations transactionally, and checks the schema version |
 | `electron/migrations/001-initial.sql` | Tables, relationships, constraints, and indexes for schema version 1 |
+| `electron/migrations/002-protected-requests.sql` | Encrypted saved-request layout for schema version 2 |
 | `src/App.jsx` | Request form, loading/error state, calling the bridge |
 | `src/components/ResponsePanel.jsx` | Response body, headers, and pretty/raw viewing |
 | `src/components/KeyValueEditor.jsx` | Shared name/value rows for query parameters and request headers |
 | `src/components/JsonBodyEditor.jsx` | None/JSON body selection, draft editing, and sample insertion |
-| `src/components/CollectionsPanel.jsx` | Loads the collection list and handles creation, cancellation, and storage messages |
+| `src/components/CollectionsPanel.jsx` | Creates collections, expands their saved requests, and opens a chosen request |
+| `src/components/SaveRequestForm.jsx` | Collection selection, request naming, save/cancel actions, and save errors |
 | `src/components/Icon.jsx` | Small inline interface icons |
 | `src/styles.css` | Interface layout and appearance |
 | `scripts/dev.cjs` | Starts Vite and Electron together |
@@ -163,6 +191,8 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `tests/request-service.test.mjs` | Request validation and response/error tests |
 | `tests/database.test.mjs` | Real SQLite persistence, relationships, constraints, migration rollback, and existing-data protection |
 | `tests/collections-service.test.mjs` | Collection validation, SQL parameter binding, ordering, Unicode limits, and storage failures |
+| `tests/saved-requests-service.test.mjs` | Saved configurations, grouping, validation, missing/corrupt records, and non-execution |
+| `tests/secure-storage.test.mjs` | Native encryption delegation, unavailable storage, and key rotation handling |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

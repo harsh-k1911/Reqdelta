@@ -11,8 +11,9 @@ let database;
 try {
   database = openDatabase(filename);
   const collection = database.prepare('INSERT INTO collections (name) VALUES (?)').run('Student API');
-  const saved = database.prepare('INSERT INTO saved_requests (collection_id, name, method, url) VALUES (?, ?, ?, ?)')
-    .run(collection.lastInsertRowid, 'Get student', 'GET', 'http://localhost:3030/students/101');
+  // An opaque placeholder demonstrates a BLOB; only Electron performs real encryption.
+  const saved = database.prepare('INSERT INTO saved_requests (collection_id, name, method, request_encrypted) VALUES (?, ?, ?, ?)')
+    .run(collection.lastInsertRowid, 'Get student', 'GET', Buffer.from('made-up encrypted payload placeholder'));
 
   const request = { method: 'GET', url: 'http://localhost:3030/students/101', queryParams: [], headers: [], body: { mode: 'none', text: '' } };
   const response = { status: 200, statusText: 'OK', body: '{"id":101,"name":"Rahul"}', format: 'json' };
