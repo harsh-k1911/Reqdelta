@@ -251,3 +251,108 @@ describe('request headers', () => {
     expect(input.headers[0].key).toBe('X-Demo');
   });
 });
+
+describe('JSON request bodies', () => {
+  function mockFetch() {
+    const fetchMock = vi.fn(async () => new Response('{"message":"received"}'));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const jsonBody = (text) => ({ mode: 'json', text });
+
+  it.each(['POST', 'PUT', 'DELETE'])('sends a JSON body with %s and supplies the default content type', async (method) => {
+    const fetchMock = mockFetch();
+    const text = '{"name":"Harsh","branch":"CSE"}';
+    const result = await executeRequest({ ...request, method, body: jsonBody(text) });
+    expect(result.ok).toBe(true);
+    const options = fetchMock.mock.calls[0][1];
+    expect(options.method).toBe(method);
+    expect(options.body).toBe(text);
+    expect(options.headers.get('content-type')).toBe('application/json');
+  });
+
+  it.each(['[]', 'null', 'false', '0', '"text"'])('accepts the valid JSON value %s', async (text) => {
+    const fetchMock = mockFetch();
+    expect((await executeRequest({ ...request, method: 'POST', body: jsonBody(text) })).ok).toBe(true);
+    expect(fetchMock.mock.calls[0][1].body).toBe(text);
+  });
+
+  it('preserves whitespace and large integer literals instead of parsing and serializing again', async () => {
+    const fetchMock = mockFetch();
+    const text = '\n{\n  "id": 9007199254740993,\n  "name": "Harsh"\n}\n';
+    await executeRequest({ ...request, method: 'POST', body: jsonBody(text) });
+    expect(fetchMock.mock.calls[0][1].body).toBe(text);
+  });
+
+  it('respects an explicit content type rather than silently replacing it', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, method: 'PUT', headers: [{ key: 'CONTENT-TYPE', value: 'application/vnd.api+json', enabled: true }], body: jsonBody('{}') });
+    expect(fetchMock.mock.calls[0][1].headers.get('content-type')).toBe('application/vnd.api+json');
+  });
+
+  it('adds the JSON content type when the custom content type row is disabled', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, method: 'POST', headers: [{ key: 'Content-Type', value: 'text/plain', enabled: false }], body: jsonBody('{}') });
+    expect(fetchMock.mock.calls[0][1].headers.get('content-type')).toBe('application/json');
+  });
+
+  it('ignores an invalid draft in None mode and adds no automatic content type', async () => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, body: { mode: 'none', text: '{ unfinished draft' } });
+    expect(result.ok).toBe(true);
+    expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
+    expect(fetchMock.mock.calls[0][1].headers.has('content-type')).toBe(false);
+  });
+
+  it('preserves explicit headers in None mode while sending no body', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, method: 'POST', headers: [{ key: 'Content-Type', value: 'application/json', enabled: true }], body: { mode: 'none', text: '{}' } });
+    expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
+    expect(fetchMock.mock.calls[0][1].headers.get('content-type')).toBe('application/json');
+  });
+
+  it('rejects a GET body even if the UI is bypassed', async () => {
+    const fetchMock = mockFetch();
+    expect((await executeRequest({ ...request, body: jsonBody('{}') })).error.code).toBe('INVALID_BODY');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty JSON body', jsonBody('')],
+    ['a whitespace-only body', jsonBody('  \n ')],
+    ['single-quoted properties', jsonBody("{'name':'Harsh'}")],
+    ['a trailing comma', jsonBody('{"name":"Harsh",}')],
+    ['an undefined value', jsonBody('undefined')],
+    ['a null body configuration', null],
+    ['an unsupported mode', { mode: 'xml', text: '<body />' }],
+    ['a non-string text value', { mode: 'json', text: {} }],
+    ['a string instead of the body configuration', '{}'],
+  ])('rejects %s before making a network call', async (_description, body) => {
+    const fetchMock = mockFetch();
+    expect((await executeRequest({ ...request, method: 'POST', body })).error.code).toBe('INVALID_BODY');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not reveal body contents through a JSON parser error', async () => {
+    mockFetch();
+    const result = await executeRequest({ ...request, method: 'POST', body: jsonBody('{"token":"private-demo-secret",}') });
+    expect(result.error.code).toBe('INVALID_BODY');
+    expect(result.error.message).not.toContain('private-demo-secret');
+  });
+
+  it('accepts exactly 1 MiB of UTF-8 JSON', async () => {
+    const fetchMock = mockFetch();
+    const text = `"${'a'.repeat(1024 * 1024 - 2)}"`;
+    expect((await executeRequest({ ...request, method: 'POST', body: jsonBody(text) })).ok).toBe(true);
+    expect(Buffer.byteLength(fetchMock.mock.calls[0][1].body)).toBe(1024 * 1024);
+  });
+
+  it('enforces the body limit using UTF-8 bytes rather than JavaScript character count', async () => {
+    const fetchMock = mockFetch();
+    const text = `"${'😀'.repeat(262_144)}"`;
+    expect(text.length).toBeLessThan(1024 * 1024);
+    expect((await executeRequest({ ...request, method: 'POST', body: jsonBody(text) })).error.code).toBe('BODY_TOO_LARGE');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

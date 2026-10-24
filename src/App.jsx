@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Icon from './components/Icon.jsx';
 import ResponsePanel from './components/ResponsePanel.jsx';
 import KeyValueEditor from './components/KeyValueEditor.jsx';
+import JsonBodyEditor from './components/JsonBodyEditor.jsx';
 
 const DEMO_ORIGIN = 'http://127.0.0.1:3030';
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
@@ -17,6 +18,7 @@ export default function App() {
   const [method, setMethod] = useState('GET');
   const [queryParams, setQueryParams] = useState([]);
   const [requestHeaders, setRequestHeaders] = useState([]);
+  const [requestBody, setRequestBody] = useState({ mode: 'none', text: '' });
   const [requestTab, setRequestTab] = useState('params');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
@@ -31,7 +33,7 @@ export default function App() {
     try {
       if (!window.reqdelta) throw new Error('Open ReqDelta in the desktop app to send requests.');
       // This calls preload, which forwards a message to the main process.
-      const result = await window.reqdelta.sendRequest({ method, url, queryParams, headers: requestHeaders });
+      const result = await window.reqdelta.sendRequest({ method, url, queryParams, headers: requestHeaders, body: requestBody });
       if (result.ok) setResponse(result.response);
       else setError(result.error.message);
     } catch (error) {
@@ -46,6 +48,7 @@ export default function App() {
     if (exampleMethod) setMethod(exampleMethod);
     setQueryParams([]);
     setRequestHeaders([]);
+    setRequestBody({ mode: 'none', text: '' });
     setRequestTab('params');
     setError(null);
     setResponse(null);
@@ -59,6 +62,12 @@ export default function App() {
 
   function handleHeadersChange(headers) {
     setRequestHeaders(headers);
+    setError(null);
+    setResponse(null);
+  }
+
+  function handleBodyChange(body) {
+    setRequestBody(body);
     setError(null);
     setResponse(null);
   }
@@ -90,6 +99,9 @@ export default function App() {
               <div className="request-bar">
                 <select className="method-select" aria-label="HTTP method" data-method={method} value={method} disabled={loading} onChange={(event) => {
                   setMethod(event.target.value);
+                  if (event.target.value === 'GET') {
+                    setRequestBody((current) => ({ ...current, mode: 'none' }));
+                  }
                   setError(null);
                   setResponse(null);
                 }}>
@@ -98,18 +110,25 @@ export default function App() {
                 <input aria-label="Request URL" type="text" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/students" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={loading} />
                 <button className="send-button" type="submit" disabled={loading}>{loading ? <><span className="spinner" /> Sending</> : <>Send request <Icon name="arrow" size={18} /></>}</button>
               </div>
-              <div className="request-help"><span><span className="subtle-dot" /> HTTP {method} · No request body</span><kbd>⌘ Enter</kbd></div>
+              <div className="request-help"><span><span className="subtle-dot" /> HTTP {method} · {requestBody.mode === 'json' ? 'JSON body' : 'No request body'}</span><kbd>⌘ Enter</kbd></div>
               <div className="request-tabs" role="tablist" aria-label="Request options">
                 <button type="button" role="tab" id="request-params-tab" aria-controls="request-params" aria-selected={requestTab === 'params'} onClick={() => setRequestTab('params')}>Params</button>
                 <button type="button" role="tab" id="request-headers-tab" aria-controls="request-headers" aria-selected={requestTab === 'headers'} onClick={() => setRequestTab('headers')}>Headers</button>
+                <button type="button" role="tab" id="request-body-tab" aria-controls="request-body" aria-selected={requestTab === 'body'} onClick={() => setRequestTab('body')}>Body</button>
               </div>
-              {requestTab === 'params' ? (
+              {requestTab === 'params' && (
                 <div role="tabpanel" id="request-params" aria-labelledby="request-params-tab">
                   <KeyValueEditor title="Query parameters" itemLabel="Parameter" rows={queryParams} onChange={handleParamsChange} disabled={loading} namePlaceholder="e.g. page" valuePlaceholder="e.g. 1" help="URL parameters are kept. Enabled rows are appended when you send." />
                 </div>
-              ) : (
+              )}
+              {requestTab === 'headers' && (
                 <div role="tabpanel" id="request-headers" aria-labelledby="request-headers-tab">
                   <KeyValueEditor title="Request headers" itemLabel="Header" rows={requestHeaders} onChange={handleHeadersChange} disabled={loading} namePlaceholder="e.g. Accept" valuePlaceholder="e.g. application/json" help="Enabled headers are sent with this request. Header names are case-insensitive." />
+                </div>
+              )}
+              {requestTab === 'body' && (
+                <div role="tabpanel" id="request-body" aria-labelledby="request-body-tab">
+                  <JsonBodyEditor body={requestBody} method={method} onChange={handleBodyChange} disabled={loading} />
                 </div>
               )}
             </form>

@@ -4,14 +4,26 @@ function createDemoServer() {
   return http.createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
-    // Echo the method without changing data, so every supported method is easy to try.
+    // Collect bytes before decoding so UTF-8 characters split across chunks survive.
     if (url.pathname === '/echo') {
-      response.end(JSON.stringify({
-        method: request.method,
-        path: url.pathname,
-        queryParams: Array.from(url.searchParams, ([key, value]) => ({ key, value })),
-        headers: request.headers,
-      }));
+      const chunks = [];
+      request.on('data', (chunk) => chunks.push(chunk));
+      request.on('error', () => response.destroy());
+      request.on('end', () => {
+        const rawBody = Buffer.concat(chunks).toString('utf8');
+        let body = null;
+        if (rawBody) {
+          try { body = JSON.parse(rawBody); } catch { body = rawBody; }
+        }
+        response.end(JSON.stringify({
+          method: request.method,
+          path: url.pathname,
+          queryParams: Array.from(url.searchParams, ([key, value]) => ({ key, value })),
+          headers: request.headers,
+          body,
+          rawBody,
+        }));
+      });
       return;
     }
     if (request.method !== 'GET') {

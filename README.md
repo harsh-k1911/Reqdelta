@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: GET, POST, PUT, and DELETE requests with query parameter and header editors.** Request bodies, collections, SQLite history, and JSON comparison are planned next; they are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: HTTP request building with methods, query parameters, headers, and JSON bodies.** Collections, SQLite history, and JSON comparison are planned next; they are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
@@ -26,19 +26,25 @@ In a second terminal, open the desktop application:
 npm run dev
 ```
 
-Press **Send request**. The default URL retrieves a student from the local demo API. You can enter an HTTP/HTTPS URL, select GET, POST, PUT, or DELETE, and configure query parameters and headers. These requests are real network calls. Request bodies are not supported yet, so endpoints that require submitted data can return an HTTP error for now.
+Press **Send request**. The default URL retrieves a student from the local demo API. You can enter an HTTP/HTTPS URL, select GET, POST, PUT, or DELETE, configure query parameters and headers, and send a JSON body with POST, PUT, or DELETE. These requests are real network calls; the target API decides which operations and data it accepts.
 
 To practise choosing methods, click **Method echo**, select a method, and send. The local `/echo` endpoint reports the method it received without changing any data. The other example buttons reset the method to GET.
 
 Use **Params → Add parameter** for extra query parameters. Enter a name and value, disable a row with its checkbox, or remove it with ×. Enabled rows are appended to any parameters already in the URL; the URL input itself is not rewritten. Repeated names are preserved. Completely blank rows are ignored, named empty values are sent, and an enabled row with a value but no name shows an error.
 
-Use the request's **Headers → Add header** controls to add headers such as `Accept: application/json` or `X-Demo-Client: ReqDelta`. Switching between Params and Headers preserves both lists. Example buttons clear both lists and return to Params. The response viewer's separate Headers tab shows the server's response headers.
+Use the request's **Headers → Add header** controls to add headers such as `Accept: application/json` or `X-Demo-Client: ReqDelta`. Switching request tabs preserves your parameters, headers, and body draft. Example buttons clear all three and return to Params. The response viewer's separate Headers tab shows the server's response headers.
 
 Header names are case-insensitive, so duplicate enabled names are rejected even when their capitalization differs. Names are trimmed, and invalid names or values show a validation error. Blank and disabled rows are skipped; named empty values are supported. The HTTP client manages transport headers such as `Host`, `Content-Length`, and `Connection` automatically, so this version rejects manual overrides of those headers.
+
+Use the request's **Body** tab and choose **JSON** to include a JSON body. You can type or paste JSON, or click **Use sample JSON**. The main process checks JSON syntax and a 1 MiB UTF-8 size limit before sending. It adds `Content-Type: application/json` unless you explicitly set Content-Type in Headers. Your original body text is sent without being reformatted or serialized again.
+
+Choose **None** to send no body while keeping your draft. Switching to GET automatically selects None; JSON bodies are unavailable for GET. When switching back to another method, choose JSON again to restore the draft. Valid JSON can still be rejected by an API if it does not match that API's expected data. File uploads, form data, and other body formats are outside this version.
 
 For a quick test, select **Student JSON**, add `version` with the value `2`, and send. The demo student should have `fullName` and an age stored as text. Or use **Method echo**, add `search` with a value such as `tea & coffee`, and inspect the returned `queryParams` array.
 
 For a header test, select **Method echo**, open the request's Headers tab, add `X-Demo-Client` with value `ReqDelta`, and send. The response body's `headers` object should contain `"x-demo-client": "ReqDelta"`. The local demo echoes all received headers, including defaults added by the HTTP client.
+
+For a body test, select **Method echo**, choose POST, open Body, select JSON, and click **Use sample JSON**. Send and inspect `body`, `rawBody`, and `headers["content-type"]` in the response. Try invalid JSON to see a validation error, then choose None to send without that draft.
 
 React changes update while the app is running. Restart `npm run dev` after changing Electron's main process, preload, or request service. Restart `npm run demo` after changing the demo API. Use Control+C in the relevant terminal to stop either process, then run its command again. On macOS, closing the last window leaves the app running; use Command+Q to quit it.
 
@@ -50,6 +56,8 @@ React changes update while the app is running. Restart `npm run dev` after chang
 - A query parameter editor with add/remove, enabled rows, duplicate names, and automatic URL encoding.
 - A request header editor with add/remove, enabled rows, and validation of names, values, duplicates, and transport overrides.
 - Params and Headers request tabs using one reusable name/value row editor.
+- A Body tab with None/JSON modes, sample JSON, draft preservation, and syntax/size validation.
+- JSON bodies for POST, PUT, and DELETE with automatic Content-Type when not explicitly configured.
 - Response status, total request duration, body size, and response headers.
 - Pretty/raw JSON and plain-text viewing. Response HTML is displayed as text.
 - Invalid URL, connection failure, 15-second timeout, and a 2 MiB response viewing limit.
@@ -68,13 +76,13 @@ No request or response data is saved by this milestone.
 | `http://127.0.0.1:3030/text` | Non-JSON response |
 | `http://127.0.0.1:3030/status/404` | An HTTP error response with a body |
 | `http://127.0.0.1:3030/slow` | Takes 20 seconds, so the client times out first |
-| `http://127.0.0.1:3030/echo` | Reports the received HTTP method, query parameters, and request headers |
+| `http://127.0.0.1:3030/echo` | Reports the received method, query parameters, headers, parsed body, and raw body text |
 
-The other demo endpoints accept GET only. Sending a different supported method to them returns `405 Method Not Allowed` with an `Allow: GET` response header. The `/echo` endpoint demonstrates the method sent; it does not create, replace, or delete a student.
+The other demo endpoints accept GET only. Sending a different supported method to them returns `405 Method Not Allowed` with an `Allow: GET` response header. The `/echo` endpoint inspects requests; it does not create, replace, or delete a student. It attempts to parse received body text as JSON for inspection, independently of the Content-Type header, and falls back to text if parsing fails. With no body it returns `body: null` and `rawBody: ""`.
 
 If the default request fails, check that `npm run demo` is running. If port 3030 is already occupied, stop that process or change the demo server port and the URL you enter. Port 5173 is reserved for the development interface.
 
-If `/echo` returns an older response or is missing `queryParams` or `headers`, restart the demo API. Editing a server file does not replace the code already loaded by its running process.
+If `/echo` returns an older response or is missing `queryParams`, `headers`, `body`, or `rawBody`, restart the demo API. Editing a server file does not replace the code already loaded by its running process.
 
 ## Verify and run a built version
 
@@ -90,7 +98,7 @@ npm start
 npm run test:desktop
 ```
 
-The desktop test opens and closes an Electron window, starts a temporary local API, and checks the actual UI-to-main-process request path. It checks parameter/header editing, request tab persistence, validation, the four methods, response/error behavior, and the smaller window layout. Screenshots are saved under `test-results/`. No external API is needed.
+The desktop test opens and closes an Electron window, starts a temporary local API, and checks the actual UI-to-main-process request path. It checks parameter/header/body editing, JSON delivery and validation, Content-Type handling, draft preservation, the four methods, response/error behavior, and the smaller window layout. Screenshots are saved under `test-results/`. No external API is needed.
 
 ## Code map
 
@@ -102,6 +110,7 @@ The desktop test opens and closes an Electron window, starts a temporary local A
 | `src/App.jsx` | Request form, loading/error state, calling the bridge |
 | `src/components/ResponsePanel.jsx` | Response body, headers, and pretty/raw viewing |
 | `src/components/KeyValueEditor.jsx` | Shared name/value rows for query parameters and request headers |
+| `src/components/JsonBodyEditor.jsx` | None/JSON body selection, draft editing, and sample insertion |
 | `src/components/Icon.jsx` | Small inline interface icons |
 | `src/styles.css` | Interface layout and appearance |
 | `scripts/dev.cjs` | Starts Vite and Electron together |

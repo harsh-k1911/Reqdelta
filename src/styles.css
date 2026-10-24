@@ -12,10 +12,10 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .65; }
-button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid #6f8d4b; outline-offset: 3px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid #6f8d4b; outline-offset: 3px; }
 button { transition: background .15s, color .15s; }
 .app-shell { display: flex; height: 100vh; min-height: 640px; }
 .sidebar { width: 218px; flex-shrink: 0; background: #eeefe8; border-right: 1px solid #dde1d5; display: flex; flex-direction: column; padding: 0 18px; }
@@ -138,6 +138,13 @@ kbd { font-family: inherit; color: #9da594; font-size: 9px; }
 .remove-row-button:hover:not(:disabled) { color: #a85e50; background: #fcf1ed; }
 .key-value-table .editor-empty { font-size: 10px; color: #9da891; padding: 11px 12px; }
 .key-value-editor > p { margin: 8px 0 0; font-size: 9px; color: #96a28a; }
+.json-body-editor { padding-top: 12px; }
+.body-editor-actions { display: flex; align-items: center; gap: 9px; }
+.body-type-select { border: 1px solid #dfe6d6; border-radius: 4px; padding: 4px 7px; background: #f5f8f0; color: #70845d; font-size: 10px; cursor: pointer; }
+.json-body-input { display: block; width: 100%; min-height: 126px; height: 138px; max-height: 260px; resize: vertical; border: 1px solid #dfe6d6; border-radius: 5px; background: #fbfcf9; padding: 11px 13px; color: #536a44; font: 11px/1.7 var(--mono); tab-size: 2; }
+.json-body-input::placeholder { color: #acb79f; }
+.json-body-editor > p { margin: 8px 0 0; font-size: 9px; color: #96a28a; }
+.json-body-editor .body-empty { padding: 18px 12px; border: 1px solid #e7ecdf; border-radius: 5px; font-size: 10px; background: #fafcf7; line-height: 1.6; margin-top: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes breathe { 50% { opacity: .4; } }
 @media (max-width: 1080px) {

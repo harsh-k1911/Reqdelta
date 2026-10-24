@@ -178,6 +178,97 @@ async function run() {
     assert.equal(await page.getByRole('textbox', { name: /^Header \d+ name$/ }).count(), 0);
     await requestOptions.getByRole('tab', { name: 'Params', exact: true }).click();
 
+    await requestOptions.getByRole('tab', { name: 'Body', exact: true }).click();
+    const bodyType = page.getByLabel('Body type', { exact: true });
+    assert.equal(await bodyType.inputValue(), 'none');
+    assert.equal(await page.getByRole('option', { name: 'JSON', exact: true }).isDisabled(), true);
+    await method.selectOption('POST');
+    await url.fill(`${origin}/echo`);
+    await bodyType.selectOption('json');
+    await page.getByRole('button', { name: 'Use sample JSON', exact: true }).click();
+    const bodyInput = page.getByRole('textbox', { name: 'JSON request body', exact: true });
+    assert.deepEqual(JSON.parse(await bodyInput.inputValue()), { name: 'Rahul', branch: 'CSE' });
+    const bodyText = '{\n  "name": "Harsh",\n  "city": "पुणे",\n  "active": false,\n  "score": 0\n}';
+    await bodyInput.fill(bodyText);
+
+    await requestOptions.getByRole('tab', { name: 'Params', exact: true }).click();
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 1 name', exact: true }).fill('page');
+    await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).fill('2');
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 1 name', exact: true }).fill('X-Demo-Client');
+    await page.getByRole('textbox', { name: 'Header 1 value', exact: true }).fill('ReqDelta');
+    await requestOptions.getByRole('tab', { name: 'Body', exact: true }).click();
+    assert.equal(await bodyInput.inputValue(), bodyText);
+    await bodyInput.press('Meta+Enter');
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    const echoedBody = JSON.parse(await page.locator('#response-body').innerText());
+    assert.deepEqual(echoedBody.body, { name: 'Harsh', city: 'पुणे', active: false, score: 0 });
+    assert.equal(echoedBody.rawBody, bodyText);
+    assert.equal(echoedBody.headers['content-type'], 'application/json');
+    assert.equal(echoedBody.headers['x-demo-client'], 'ReqDelta');
+    assert.deepEqual(echoedBody.queryParams, [{ key: 'page', value: '2' }]);
+    await page.screenshot({ path: 'test-results/desktop-json-body.png' });
+
+    for (const selectedMethod of ['PUT', 'DELETE']) {
+      await method.selectOption(selectedMethod);
+      await send.click();
+      await page.getByText('200 OK', { exact: true }).waitFor();
+      const result = JSON.parse(await page.locator('#response-body').innerText());
+      assert.equal(result.method, selectedMethod);
+      assert.equal(result.rawBody, bodyText);
+    }
+
+    await bodyInput.fill('{"name":"Harsh",}');
+    await send.click();
+    await page.getByRole('alert').filter({ hasText: 'not valid JSON' }).waitFor();
+    assert.equal(await send.isEnabled(), true);
+    await bodyType.selectOption('none');
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    const withoutBody = JSON.parse(await page.locator('#response-body').innerText());
+    assert.equal(withoutBody.rawBody, '');
+    assert.equal(withoutBody.body, null);
+    assert.equal(withoutBody.headers['content-type'], undefined);
+
+    await bodyType.selectOption('json');
+    assert.equal(await bodyInput.inputValue(), '{"name":"Harsh",}');
+    await bodyInput.fill(bodyText);
+    await method.selectOption('GET');
+    assert.equal(await bodyType.inputValue(), 'none');
+    assert.equal(await page.getByRole('option', { name: 'JSON', exact: true }).isDisabled(), true);
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    assert.equal(JSON.parse(await page.locator('#response-body').innerText()).rawBody, '');
+    await method.selectOption('POST');
+    assert.equal(await bodyType.inputValue(), 'none');
+    await bodyType.selectOption('json');
+    assert.equal(await bodyInput.inputValue(), bodyText);
+
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 2 name', exact: true }).fill('Content-Type');
+    await page.getByRole('textbox', { name: 'Header 2 value', exact: true }).fill('application/vnd.api+json');
+    await requestOptions.getByRole('tab', { name: 'Body', exact: true }).click();
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    assert.equal(JSON.parse(await page.locator('#response-body').innerText()).headers['content-type'], 'application/vnd.api+json');
+
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    await bodyInput.scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: 'test-results/desktop-json-body-small.png' });
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
+    await requestOptions.getByRole('tab', { name: 'Body', exact: true }).click();
+    assert.equal(await bodyType.inputValue(), 'none');
+    await method.selectOption('POST');
+    await bodyType.selectOption('json');
+    assert.equal(await bodyInput.inputValue(), '');
+    await bodyType.selectOption('none');
+    await requestOptions.getByRole('tab', { name: 'Params', exact: true }).click();
+
     await method.selectOption('POST');
     await url.fill(`${origin}/students/101`);
     await send.click();
@@ -210,7 +301,7 @@ async function run() {
     assert.equal(await send.isEnabled(), true);
 
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: custom headers, header validation and duplicates, row add/remove/disable, empty headers, request tab persistence, combined query/header requests, keyboard shortcuts, smaller-window layout, example resets, all four HTTP methods, response viewing, and connection errors.');
+    console.log('Desktop checks passed: JSON bodies with POST/PUT/DELETE, Unicode and exact body text, automatic/custom content type, invalid JSON recovery, None/GET draft behavior, sample/reset actions, combined params/headers/body, smaller-window layout, and the existing request workflow.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

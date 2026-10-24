@@ -42,7 +42,7 @@ CommonJS and TypeScript describe different things. CommonJS is the `require()` /
 
 1. In `src/App.jsx`, pressing Send submits the form and calls `handleSend`.
 2. `setLoading(true)` causes React to render a disabled send button and a waiting state. `useState` holds this screen's current data.
-3. The UI calls `window.reqdelta.sendRequest({ method, url, queryParams, headers: requestHeaders })` and awaits the result. The selected method starts as GET; extra query parameter and header lists start empty. `await` pauses this function until its promise settles; it does not freeze the whole application.
+3. The UI calls `window.reqdelta.sendRequest({ method, url, queryParams, headers: requestHeaders, body: requestBody })` and awaits the result. The selected method starts as GET, extra query parameter and header lists start empty, and the body starts in None mode. `await` pauses this function until its promise settles; it does not freeze the whole application.
 4. In `electron/preload.cjs`, `ipcRenderer.invoke('requests:send', request)` sends a message to Electron's main process. IPC means inter-process communication.
 5. In `electron/main.cjs`, `ipcMain.handle('requests:send', ...)` receives that message. It checks the sender and then calls `executeRequest`.
 6. In `electron/request-service.cjs`, the service validates the URL, sends an HTTP GET request, reads the body, and returns a plain result object.
@@ -272,4 +272,68 @@ Verification passed: all 68 request-service tests, the production build, and the
 
 Message: `feat(requests): add custom request header editor`
 
-Next separate checkpoint: the JSON request body editor.
+The JSON request body editor is the next checkpoint, covered in Lesson 5 below.
+
+## Lesson 5: JSON request bodies
+
+The method says which operation we request, the URL identifies the resource, and a body carries data submitted to it. For example, a POST may submit student details. The server still needs to support that route, validate the fields, and decide what to do with them. Our `/echo` endpoint only inspects the request; it does not save a student.
+
+`Content-Type: application/json` labels the submitted body as JSON. `Accept: application/json` asks for JSON in the response. These two headers describe different directions. See the [Fetch request body guide](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#setting_a_body).
+
+### Data model and React state
+
+`App` owns one body configuration object:
+
+```js
+{
+  mode: 'json',
+  text: '{"name":"Rahul","branch":"CSE"}'
+}
+```
+
+The `text` property contains a string, not a JavaScript student object. It must remain a string while editing because drafts can be incomplete JSON. `JsonBodyEditor` uses a controlled textarea, and calls the parent's change handler with a new object when you type or choose a mode.
+
+`{ ...body, text: newText }` copies the existing properties and replaces `text`. When the method switches to GET, `setRequestBody(current => ({ ...current, mode: 'none' }))` preserves the latest draft while changing only its mode. This functional state update receives the current state from React.
+
+Choosing None keeps the draft but sends no body. Switching back from GET leaves None selected; choosing JSON again restores the draft. Choosing an example clears the draft, parameters, and headers.
+
+### Follow the code
+
+1. The Body request tab renders `src/components/JsonBodyEditor.jsx`. Its None/JSON selector controls whether the textarea appears. JSON is unavailable for GET in this Fetch-based client.
+2. **Use sample JSON** fills the textarea with an object formatted using `JSON.stringify(..., null, 2)`. The sample is actual draft text; the placeholder alone is not sent.
+3. `handleSend` adds `body: requestBody` to the existing request object. Preload and IPC continue forwarding that object without a new channel.
+4. `buildRequestBody` in `electron/request-service.cjs` checks the configuration shape, skips None mode, and rejects a GET body even if the UI is bypassed.
+5. It checks `Buffer.byteLength(text, 'utf8')` against a 1 MiB limit. MiB means 1,048,576 bytes. Network payload size is measured in bytes, and Unicode text can use multiple bytes per character.
+6. `JSON.parse(text)` checks syntax. Empty text, trailing commas, and single-quoted property names are rejected. Arrays and primitive JSON values such as `false`, `0`, and `null` are accepted. See [JSON.parse](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/parse).
+7. If Content-Type was not supplied through the Headers editor, the service adds `application/json`. Explicit Content-Type values are preserved so you remain in control of the request.
+8. The service returns the original text, then passes it to `fetch` as the request body. In `const { body: requestBody } = ...`, object destructuring renames the property locally, keeping it distinct from the response body read later.
+9. The demo API receives body chunks as bytes. It collects them, decodes the complete UTF-8 text once, and returns `rawBody` plus a parsed `body` for inspection. Collecting bytes first avoids corrupting a Unicode character split across chunks.
+
+### Validation is different from serialization
+
+We parse the text to check it, then discard that parsed value and send the original text. Calling `JSON.stringify(body.text)` would turn the entire JSON document into a quoted JSON string. Parsing and serializing it again could also alter formatting or large integer literals. Our check preserves the submitted text.
+
+The demo's parsed `body` uses JavaScript values, so large integer values in that parsed display may lose precision. Its `rawBody` field preserves the received text. Valid JSON also does not prove the data matches an API's schema: a missing required field may still produce a valid HTTP error response.
+
+The body limit applies only when JSON mode actually sends the draft. None mode sends no draft and adds no automatic Content-Type. An explicitly configured Content-Type header remains under your control in either mode.
+
+### Practise it
+
+1. Restart the demo API and desktop app to load the updated server and main-process service.
+2. Click **Method echo**, choose POST, open **Body**, select JSON, and click **Use sample JSON**.
+3. Send. Find the student fields in the echoed `body`, the submitted text in `rawBody`, and `application/json` in the received headers.
+4. Change a value to your own name and send again. Add a query parameter and custom header, then confirm all three types of input arrive together.
+5. Remove a closing brace and send. Explain why the error appears before an HTTP request is made. Choose None and send again; the unfinished draft should not be sent.
+6. Restore valid JSON and select GET. The body mode becomes None. Switch to POST, choose JSON, and confirm your draft is still there.
+
+Checkpoint questions: Why store the body draft as text? How does `JSON.parse` differ from `JSON.stringify`? Why is Content-Type different from Accept? Why use a functional state update when switching to GET? Why validate in the main process as well as limiting choices in the UI?
+
+### Git checkpoint 5
+
+Verification passed: all 94 request-service tests, the production build, and the desktop check. Checks include actual JSON delivery with POST/PUT/DELETE, Unicode, exact text preservation, automatic/custom Content-Type, invalid JSON recovery, None/GET draft behavior, sample/reset actions, combined parameters/headers/body, the smaller-window layout, and the existing request workflow.
+
+**Commit now.** Include the new `src/components/JsonBodyEditor.jsx` and all other changes for this feature: the request service, App state and Body tab, demo API, styling, tests, and documentation.
+
+Message: `feat(requests): add validated JSON request body editor`
+
+The basic request-building phase is complete. The next separate checkpoint is the SQLite storage foundation, followed by collections, saved requests, and execution history in small steps. These persistence features are not implemented yet.

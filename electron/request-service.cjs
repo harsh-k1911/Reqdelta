@@ -3,6 +3,7 @@ const { validateHeaderName, validateHeaderValue } = require('node:http');
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const SUPPORTED_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
 const MANAGED_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'te', 'trailer', 'upgrade', 'expect', 'proxy-connection']);
 
@@ -45,6 +46,32 @@ function buildHeaders(rows = []) {
   return headers;
 }
 
+function buildRequestBody(body, method, headers) {
+  if (body === undefined) return undefined;
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !['none', 'json'].includes(body.mode) || typeof body.text !== 'string') {
+    throw new RequestError('INVALID_BODY', 'Choose None or JSON for the request body and provide body text.');
+  }
+  if (body.mode === 'none') return undefined;
+  if (method === 'GET') {
+    throw new RequestError('INVALID_BODY', 'GET requests cannot send a body. Choose None or use another method.');
+  }
+  if (Buffer.byteLength(body.text, 'utf8') > MAX_REQUEST_BODY_BYTES) {
+    throw new RequestError('BODY_TOO_LARGE', 'The request body exceeds the 1 MiB limit.');
+  }
+  if (!body.text.trim()) {
+    throw new RequestError('INVALID_BODY', 'Enter a JSON body or choose None.');
+  }
+  try {
+    JSON.parse(body.text);
+  } catch {
+    // Parser errors may repeat request data, so return a helpful generic message.
+    throw new RequestError('INVALID_BODY', 'The request body is not valid JSON. Check double quotes, commas, and brackets.');
+  }
+  if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+  // Validate by parsing, then send the original text without serializing it again.
+  return body.text;
+}
+
 function validateRequest(request) {
   if (!request || typeof request.url !== 'string' || !request.url.trim()) {
     throw new RequestError('INVALID_URL', 'Enter an API URL beginning with http:// or https://.');
@@ -80,7 +107,9 @@ function validateRequest(request) {
     // append preserves repeated names and safely encodes spaces, &, +, and Unicode.
     url.searchParams.append(param.key, param.value);
   }
-  return { url: url.href, method: request.method, headers: buildHeaders(request.headers) };
+  const headers = buildHeaders(request.headers);
+  const body = buildRequestBody(request.body, request.method, headers);
+  return { url: url.href, method: request.method, headers, body };
 }
 
 async function readBody(response, controller, maxBytes) {
@@ -111,11 +140,11 @@ async function executeRequest(request, options = {}) {
   const controller = new AbortController();
   let timer;
   try {
-    const { url, method, headers } = validateRequest(request);
+    const { url, method, headers, body: requestBody } = validateRequest(request);
     const startedAt = performance.now();
     // The timeout covers downloading the body as well as receiving headers.
     timer = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(url, { method, headers, signal: controller.signal, redirect: 'follow' });
+    const response = await fetch(url, { method, headers, body: requestBody, signal: controller.signal, redirect: 'follow' });
     const { body, sizeBytes } = await readBody(response, controller, maxBytes);
     let format = 'text';
     try {
