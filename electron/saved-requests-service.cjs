@@ -1,27 +1,10 @@
-const { randomUUID } = require('node:crypto');
-const { validateRequest, RequestError } = require('./request-service.cjs');
+const { RequestError } = require('./request-service.cjs');
+const { copyRequest } = require('./request-config.cjs');
 
 const FIELDS = 'id, collection_id AS collectionId, name, method, created_at AS createdAt, updated_at AS updatedAt';
 const failure = (code, message) => ({ ok: false, error: { code, message } });
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
-
-function copyRequest(input) {
-  if (!isObject(input)) throw new RequestError('INVALID_REQUEST', 'Provide a request configuration.');
-  validateRequest(input); // Shared validation only: saving never calls fetch.
-  const copyRows = (rows = []) => rows.map(({ key, value, enabled }) => ({ id: randomUUID(), key, value, enabled }));
-  const request = {
-    method: input.method,
-    url: input.url.trim(), // Keep the original URL; do not append parameter rows twice.
-    queryParams: copyRows(input.queryParams),
-    headers: copyRows(input.headers),
-    body: input.body === undefined ? { mode: 'none', text: '' } : { mode: input.body.mode, text: input.body.text },
-  };
-  if (Buffer.byteLength(JSON.stringify(request), 'utf8') > 2 * 1024 * 1024) {
-    throw new RequestError('REQUEST_TOO_LARGE', 'The saved request exceeds the 2 MiB configuration limit.');
-  }
-  return request;
-}
 
 function createSavedRequestsService(database, secureStorage) {
   return {

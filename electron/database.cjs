@@ -2,7 +2,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { mkdirSync, readFileSync } = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function openDatabase(filename) {
   if (filename !== ':memory:') mkdirSync(path.dirname(filename), { recursive: true });
@@ -30,6 +30,13 @@ function openDatabase(filename) {
         }
         database.exec(readFileSync(path.join(__dirname, 'migrations', '002-protected-requests.sql'), 'utf8'));
         database.exec('PRAGMA user_version = 2;');
+      }
+      if (version < 3) {
+        if (database.prepare('SELECT count(*) AS total FROM request_history').get().total > 0) {
+          throw new Error('This older database contains manually inserted history. Its data was preserved; migrate those records before upgrading.');
+        }
+        database.exec(readFileSync(path.join(__dirname, 'migrations', '003-protected-history.sql'), 'utf8'));
+        database.exec('PRAGMA user_version = 3;');
       }
       database.exec('COMMIT;');
     } catch (error) {

@@ -15,10 +15,8 @@ try {
   const saved = database.prepare('INSERT INTO saved_requests (collection_id, name, method, request_encrypted) VALUES (?, ?, ?, ?)')
     .run(collection.lastInsertRowid, 'Get student', 'GET', Buffer.from('made-up encrypted payload placeholder'));
 
-  const request = { method: 'GET', url: 'http://localhost:3030/students/101', queryParams: [], headers: [], body: { mode: 'none', text: '' } };
-  const response = { status: 200, statusText: 'OK', body: '{"id":101,"name":"Rahul"}', format: 'json' };
-  database.prepare('INSERT INTO request_history (saved_request_id, request_snapshot_json, response_snapshot_json, duration_ms) VALUES (?, ?, ?, ?)')
-    .run(saved.lastInsertRowid, JSON.stringify(request), JSON.stringify(response), 12);
+  database.prepare('INSERT INTO request_history (saved_request_id, method, status_code, snapshot_encrypted, duration_ms) VALUES (?, ?, ?, ?, ?)')
+    .run(saved.lastInsertRowid, 'GET', 200, Buffer.from('made-up execution snapshot placeholder'), 12);
 
   database.close();
   database = null;
@@ -27,7 +25,7 @@ try {
 
   const row = database.prepare(`
     SELECT collections.name AS collection_name, saved_requests.name AS request_name,
-      json_extract(request_history.response_snapshot_json, '$.status') AS response_status
+      request_history.status_code AS response_status
     FROM request_history
     JOIN saved_requests ON saved_requests.id = request_history.saved_request_id
     JOIN collections ON collections.id = saved_requests.collection_id

@@ -1,5 +1,6 @@
 export default function Icon({ name, size = 18, ...props }) {
   const paths = {
+    history: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     arrow: <><path d="M4 12h15M13 5l7 7-7 7" /></>,
     request: <><path d="m8 5-7 7 7 7M16 5l7 7-7 7M14 3l-4 18" /></>,

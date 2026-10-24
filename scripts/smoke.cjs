@@ -32,7 +32,7 @@ async function run() {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection', 'createSavedRequest', 'listSavedRequests', 'getSavedRequest']);
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection', 'createSavedRequest', 'listSavedRequests', 'getSavedRequest', 'listHistory', 'getHistoryEntry']);
 
     const storage = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -48,9 +48,13 @@ async function run() {
       } finally { database.close(); }
     });
     assert.equal(storage.directory, path.resolve(userData));
-    assert.equal(storage.version, 2);
+    assert.equal(storage.version, 3);
     assert.deepEqual(storage.tables, ['collections', 'request_history', 'saved_requests']);
     assert.equal(storage.collections, 0);
+    const historyNav = page.getByRole('button', { name: 'History', exact: true });
+    await historyNav.click();
+    await page.getByText('No executions yet. Send a request to start your history.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Request builder', exact: true }).click();
 
     await page.getByText('No collections yet. Use + to create your first group.', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Save request', exact: true }).click();
@@ -366,10 +370,12 @@ async function run() {
     await send.click();
     await page.getByText('404 Not Found', { exact: true }).waitFor();
     assert.equal(await page.getByRole('alert').count(), 0);
+    const notFoundHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
 
     await url.fill('file:///etc/passwd');
     await send.click();
     await page.getByRole('alert').filter({ hasText: 'Only HTTP and HTTPS' }).waitFor();
+    assert.equal((await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id, notFoundHistoryId);
 
     await url.fill(`${origin}/students/101`);
     await url.press('Meta+Enter');
@@ -433,6 +439,9 @@ async function run() {
     assert.equal(savedEcho.headers.authorization, 'Bearer demo-header-secret');
     assert.equal(savedEcho.rawBody, savedBody);
     assert.deepEqual(savedEcho.queryParams, [{ key: 'base', value: 'kept' }, { key: 'api_key', value: 'demo-url-secret' }, { key: 'tag', value: 'extra & café' }]);
+    const firstEchoHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
+    const firstEchoHistory = await page.evaluate((id) => window.reqdelta.getHistoryEntry({ id }), firstEchoHistoryId);
+    assert.equal(firstEchoHistory.entry.savedRequestId, firstSaved.savedRequests[0].id);
     await method.selectOption('DELETE');
     await url.fill(`${origin}/text`);
     await bodyType.selectOption('none');
@@ -456,6 +465,13 @@ async function run() {
     savedEcho = JSON.parse(await page.locator('#response-body').innerText());
     assert.equal(savedEcho.rawBody, savedBody);
     assert.equal(savedEcho.queryParams.filter((item) => item.key === 'tag').length, 1);
+    const editedBody = savedBody.replace('Harsh 😀', 'Changed draft');
+    await bodyInput.fill(editedBody);
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    assert.equal(JSON.parse(await page.locator('#response-body').innerText()).rawBody, editedBody);
+    const oldEcho = await page.evaluate((id) => window.reqdelta.getHistoryEntry({ id }), firstEchoHistoryId);
+    assert.equal(JSON.parse(oldEcho.entry.outcome.response.body).rawBody, savedBody);
 
     await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
     await url.fill(`${origin}/students/101?version=2`);
@@ -477,6 +493,44 @@ async function run() {
     await saveForm.getByRole('button', { name: 'Cancel save', exact: true }).click();
     assert.equal((await page.evaluate((collectionId) => window.reqdelta.listSavedRequests({ collectionId }), otherCollectionId)).savedRequests.length, 1);
     await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+
+    await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
+    await url.fill(`${origin}/students/101`);
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    const originalStudentHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 1 name', exact: true }).fill('version');
+    await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).fill('2');
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    const changedStudentHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
+
+    // A failed history write must keep the real response and never retry the API.
+    await desktop.evaluate(({ app }) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+      const path = process.getBuiltinModule('node:path');
+      const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
+      try { database.exec("CREATE TRIGGER fail_history BEFORE INSERT ON request_history BEGIN SELECT RAISE(ABORT, 'test write failure'); END;"); }
+      finally { database.close(); }
+    });
+    const beforeWriteFailure = requestsReceived;
+    await page.getByRole('button', { name: 'Method echo', exact: true }).click();
+    await method.selectOption('POST');
+    await url.fill(`${origin}/echo`);
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    await page.getByRole('alert').filter({ hasText: 'History was not saved.' }).waitFor();
+    assert.equal(requestsReceived, beforeWriteFailure + 1);
+    assert.equal((await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id, changedStudentHistoryId);
+    await desktop.evaluate(({ app }) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+      const path = process.getBuiltinModule('node:path');
+      const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
+      try { database.exec('DROP TRIGGER fail_history;'); } finally { database.close(); }
+    });
+    await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
+    await url.fill(`${origin}/students/101`);
     const databaseBytes = await fs.readFile(path.join(userData, 'reqdelta.sqlite'));
     for (const secret of ['demo-url-secret', 'demo-header-secret', 'demo-body-secret']) assert.equal(databaseBytes.includes(Buffer.from(secret)), false);
 
@@ -485,6 +539,54 @@ async function run() {
     await send.click();
     await page.getByRole('alert').filter({ hasText: 'Could not reach the API' }).waitFor();
     assert.equal(await send.isEnabled(), true);
+    const failedHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
+    const beforeInspection = requestsReceived;
+    await historyNav.click();
+    await page.getByRole('heading', { name: 'Execution history', exact: true }).waitFor();
+    await page.getByRole('button', { name: `Open history entry ${failedHistoryId}`, exact: true }).waitFor();
+    await page.screenshot({ path: 'test-results/desktop-history.png' });
+    const older = page.getByRole('button', { name: 'Older executions', exact: true });
+    if (await older.isEnabled()) {
+      const firstPageIds = await page.getByRole('button', { name: /^Open history entry / }).evaluateAll((elements) => elements.map((element) => element.getAttribute('aria-label')));
+      const expectedOlderId = await page.evaluate(async () => {
+        const first = await window.reqdelta.listHistory();
+        const next = await window.reqdelta.listHistory({ beforeId: first.nextBeforeId });
+        return next.entries[0].id;
+      });
+      await older.click();
+      await page.getByRole('button', { name: `Open history entry ${expectedOlderId}`, exact: true }).waitFor();
+      const olderIds = await page.getByRole('button', { name: /^Open history entry / }).evaluateAll((elements) => elements.map((element) => element.getAttribute('aria-label')));
+      assert.equal(olderIds.some((id) => firstPageIds.includes(id)), false);
+      await page.getByRole('button', { name: 'Newest executions', exact: true }).click();
+      await page.getByRole('button', { name: `Open history entry ${failedHistoryId}`, exact: true }).waitFor();
+    }
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: 'test-results/desktop-history-small.png' });
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+
+    await page.getByRole('button', { name: `Open history entry ${changedStudentHistoryId}`, exact: true }).click();
+    await page.getByText(`Saved execution #${changedStudentHistoryId}`, { exact: true }).waitFor();
+    assert.equal(JSON.parse(await page.locator('#response-body').innerText()).fullName, 'Rahul');
+    assert.equal(JSON.parse(await page.locator('#response-body').innerText()).age, '20');
+    await responseDetails.getByRole('tab', { name: /Headers/ }).click();
+    await page.getByRole('cell', { name: 'content-type', exact: true }).waitFor();
+    await responseDetails.getByRole('tab', { name: 'Body', exact: true }).click();
+    assert.equal(requestsReceived, beforeInspection);
+    await page.screenshot({ path: 'test-results/desktop-history-snapshot.png' });
+    await url.fill(`${origin}/edited-draft`);
+    assert.equal(await page.locator('.history-source').count(), 0);
+    await page.getByText('No response yet', { exact: true }).waitFor();
+
+    await historyNav.click();
+    await page.getByRole('button', { name: `Open history entry ${notFoundHistoryId}`, exact: true }).click();
+    await page.getByText('404 Not Found', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('alert').count(), 0);
+    await historyNav.click();
+    await page.getByRole('button', { name: `Open history entry ${failedHistoryId}`, exact: true }).click();
+    await page.getByText('Saved execution failed', { exact: true }).waitFor();
+    await page.getByText('No HTTP response available', { exact: true }).waitFor();
+    assert.equal(requestsReceived, beforeInspection);
 
     assert.deepEqual(errors, []);
 
@@ -509,6 +611,13 @@ async function run() {
     assert.equal(restored.savedRequest.request.headers[0].value, 'Bearer demo-header-secret');
     assert.equal(restored.savedRequest.request.queryParams[1].enabled, false);
     await reopenedPage.getByText('No response yet', { exact: true }).waitFor();
+    await reopenedPage.getByRole('button', { name: 'History', exact: true }).click();
+    await reopenedPage.getByRole('button', { name: `Open history entry ${originalStudentHistoryId}`, exact: true }).click();
+    await reopenedPage.getByText(`Saved execution #${originalStudentHistoryId}`, { exact: true }).waitFor();
+    const originalStudent = JSON.parse(await reopenedPage.locator('#response-body').innerText());
+    assert.equal(originalStudent.name, 'Rahul');
+    assert.equal(originalStudent.age, 20);
+    assert.equal(requestsReceived, beforeInspection);
     const persisted = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
       const path = process.getBuiltinModule('node:path');
@@ -523,9 +632,9 @@ async function run() {
         };
       } finally { database.close(); }
     });
-    assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 2, history: 0, version: 2 });
+    assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 2, history: requestsReceived, version: 3 });
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: collections, encrypted request saving/loading, validation and cancellation, grouping, no execution during save/load, restored headers/parameters/body after an app restart, smaller-window layout, isolated SQLite storage, no automatic history yet, and the complete HTTP request workflow.');
+    console.log('Desktop checks passed: encrypted history for responses and failures, immutable snapshots, offline inspection after restart, history pagination, storage-write failure without HTTP retry, collections and saved requests, smaller-window layout, and the complete HTTP workflow.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

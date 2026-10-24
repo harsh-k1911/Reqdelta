@@ -5,7 +5,7 @@ function formatSize(bytes) {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-export default function ResponsePanel({ response, loading }) {
+export default function ResponsePanel({ response, loading, failure = false }) {
   const [tab, setTab] = useState('body');
   const [pretty, setPretty] = useState(true);
   const displayedBody = response?.format === 'json' && pretty
@@ -21,14 +21,14 @@ export default function ResponsePanel({ response, loading }) {
             <span className={`http-status ${response.status >= 400 ? 'http-error' : ''}`}>{response.status} {response.statusText}</span>
             <span>{response.durationMs} ms</span><span>{formatSize(response.sizeBytes)}</span>
           </div>
-        ) : <span className="muted small">{loading ? 'Connecting to your API…' : 'No response yet'}</span>}
+        ) : <span className="muted small">{loading ? 'Connecting to your API…' : failure ? 'No HTTP response available' : 'No response yet'}</span>}
       </div>
 
       {!response ? (
         <div className="empty-response">
           <div className={`response-illustration ${loading ? 'is-loading' : ''}`}><Icon name="terminal" size={33} /></div>
-          <h3>{loading ? 'A request is on its way' : 'Make your first connection.'}</h3>
-          <p>{loading ? 'Waiting for the server to return a response.' : 'Send a request to see its status, headers, and body here.'}</p>
+          <h3>{loading ? 'A request is on its way' : failure ? 'No response to inspect.' : 'Make your first connection.'}</h3>
+          <p>{loading ? 'Waiting for the server to return a response.' : failure ? 'See the error above for details about this attempt.' : 'Send a request to see its status, headers, and body here.'}</p>
           <span className="empty-caption">LESS GUESSWORK. MORE CLARITY.</span>
         </div>
       ) : (

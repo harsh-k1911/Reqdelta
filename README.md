@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: the HTTP request builder, collections, and encrypted saved requests.** You can save a configuration into a collection and load it after an app restart. Automatic execution history and JSON comparison are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: requests, collections, and encrypted execution history.** Save reusable configurations, execute requests, and reopen stored responses after an app restart without contacting the API again. JSON comparison is not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
@@ -74,7 +74,21 @@ On macOS, the main process serializes the entire configuration and encrypts it u
 
 There is no plaintext fallback. If secure storage is unavailable, saving fails and your draft remains available. If a saved payload cannot be decrypted, its record is kept and an error appears without replacing the current builder. Listing names does not decrypt the configurations. This feature currently supports macOS only.
 
-This is protection for local storage, not a portable export or a guarantee against a compromised running app. Copying the database to another Mac/account does not copy its Keychain key. Development and packaged builds can also differ in app identity; packaging verification will check this separately. Unsigned builds may prompt for Keychain access again when their identity changes. History and response persistence are still pending and store no real interface executions yet.
+This is protection for local storage, not a portable export or a guarantee against a compromised running app. Copying the database to another Mac/account does not copy its Keychain key. Development and packaged builds can also differ in app identity; packaging verification will check this separately. Unsigned builds may prompt for Keychain access again when their identity changes. History uses the same protection for its complete request/outcome snapshots, including response headers and body.
+
+## Execution history
+
+Each valid request attempt now records its configuration and outcome after execution. This works for unsaved requests too. HTTP responses such as 404 remain inspectable responses; network failures, timeouts, and response-size failures are recorded as error outcomes. Invalid inputs rejected before execution do not create history. Sending now shares the 2 MiB total configuration limit used by request saving.
+
+Choose **History** in the sidebar. The list shows request names when linked to a saved request, methods, status/error codes, duration, and local start times. URLs and body/header contents are not read into this list. **Older executions** pages through earlier records; **Newest executions** returns to the first page. Each page contains up to 20 entries.
+
+Choose **Open** to restore the request inputs and inspect the stored response or failure in the builder. This makes no HTTP call and works while the API is stopped. A **Saved execution** banner identifies the snapshot. Editing an input clears the historical result from the screen; it does not change the stored snapshot. Pressing Send request explicitly runs the current configuration again and creates another history entry.
+
+Snapshots are independent copies. Editing or deleting a saved request does not change its old snapshot content. The optional link identifies the originating saved request, even if its draft was edited before execution. The list's name is the linked request's current label; if the parent is deleted, the snapshot stays and the link becomes NULL. Opening history creates an independent builder draft rather than updating a saved request.
+
+History automatically retains the newest **100 entries** within **50 MiB of encrypted snapshot bytes**, removing older entries when either limit is reached. An individual serialized snapshot is limited to 16 MiB. This byte budget measures stored payloads, not a hard cap on SQLite's physical file size. There is no clear/delete-history button in this checkpoint.
+
+If history encryption or writing fails, the HTTP result still appears with a separate **History was not saved** warning. The app does not automatically repeat the HTTP request. Opening a missing or unreadable snapshot shows an error without replacing it. Duration measures the HTTP attempt, excluding the later encryption/database work. History is committed before a normal Send action finishes; quitting during an in-flight request can prevent its completion from being recorded.
 
 ## What works now
 
@@ -96,8 +110,11 @@ This is protection for local storage, not a portable export or a guarantee again
 - Collection creation and listing through validated main-process operations, with persistence across app restarts.
 - Saving and opening request configurations grouped by collection, protected with macOS-backed encryption.
 - Restoration of methods, original URLs, query/header rows, enabled flags, body modes, and exact body drafts.
+- Automatic encrypted history for HTTP responses and execution failures, with bounded retention and pagination.
+- Offline snapshot inspection after restarting, including stored body, response headers, and request inputs.
+- Separate storage warnings that preserve the HTTP result and never trigger an automatic retry.
 
-The first startup creates empty storage tables. Collections and explicitly saved request configurations are now written to SQLite. Response snapshots and automatic execution history from the interface are not yet stored.
+The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are now persisted. JSON response comparison is the next core feature.
 
 ## SQLite storage foundation
 
@@ -107,13 +124,15 @@ The main process opens `reqdelta.sqlite` in Electron's `app.getPath('userData')`
 | --- | --- |
 | `collections` | Named groups of saved requests |
 | `saved_requests` | Readable request metadata and an encrypted configuration linked to a collection |
-| `request_history` | Separate execution snapshots linked optionally to a saved request |
+| `request_history` | Outcome metadata and encrypted execution snapshots linked optionally to a saved request |
 
-The current schema version is 2. A fresh file applies the original migration and then the encrypted-request migration in one transaction. A version 1 workspace from the previous checkpoint upgrades while retaining its collections. Version 2 opens skip those migrations. Failed setup rolls back, and a database with a newer schema version is rejected without resetting it. A startup error shows a message and quits the app; it does not delete the database.
+The current schema version is 3. A fresh file applies the three migrations in one transaction. A version 1 workspace upgrades while retaining its collections; version 2 also retains its encrypted saved requests unchanged. Version 3 opens skip those migrations. Failed setup rolls back, and a database with a newer schema version is rejected without resetting it. A startup error shows a message and quits the app; it does not delete the database.
 
 Version 1 had no request-saving interface. The second migration replaces its empty saved-request table with the encrypted layout. As a preservation guard, if someone manually seeded version 1 request rows, the upgrade stops and retains that database for manual conversion; it does not drop those records. The old `db:demo` exercise used its own temporary file, not your app workspace.
 
-The database connection and encryption operations stay in the main process. The six preload functions are `sendRequest`, `listCollections`, `createCollection`, `createSavedRequest`, `listSavedRequests`, and `getSavedRequest`. Each handler checks the sender. The renderer has no direct database, arbitrary SQL, or general-purpose encryption access. Inserts and lookups bind values separately from SQL text.
+Versions 1 and 2 did not record real history. The third migration replaces that empty history table with its encrypted layout. It similarly refuses an upgrade containing manually seeded older history, preserving that file for manual conversion instead of deleting it.
+
+The database connection and encryption operations stay in the main process. The eight preload functions are `sendRequest`, `listCollections`, `createCollection`, `createSavedRequest`, `listSavedRequests`, `getSavedRequest`, `listHistory`, and `getHistoryEntry`. Each handler checks the sender. History writes happen only inside the main-process request runner. The renderer has no direct database, arbitrary SQL, general-purpose encryption, or history-insert access. Inserts and lookups bind values separately from SQL text.
 
 Run the learning exercise:
 
@@ -121,7 +140,7 @@ Run the learning exercise:
 npm run db:demo
 ```
 
-It creates a fresh temporary database, inserts made-up collection/request/history records using prepared statements, closes the database, reopens it, and reads the records back. The saved request uses opaque placeholder bytes to demonstrate a BLOB; real encryption happens only in Electron. It prints the temporary file location for inspection. It makes no HTTP calls and does not use your app workspace database. Each run uses a new temporary file.
+It creates a fresh temporary database, inserts made-up collection/request/history records using prepared statements, closes the database, reopens it, and reads the records back. Both configurations and execution snapshots use opaque placeholder bytes to demonstrate BLOBs; real encryption happens only in Electron. It prints the temporary file location for inspection. It makes no HTTP calls and does not use your app workspace database. Each run uses a new temporary file.
 
 Local `.sqlite`/`.db` files and their journal files are excluded by `.gitignore`; commit the migration SQL and application code.
 
@@ -156,7 +175,7 @@ npm start
 npm run test:desktop
 ```
 
-The desktop test opens Electron using a temporary profile and creates collections and saved requests through the actual interface. It checks validation, cancellation, grouping, the smaller-window layout, real macOS encryption, and the complete HTTP workflow against a local API. It confirms that save/open actions make no HTTP calls and that made-up secret fixtures are absent from database bytes. It quits and reopens the app, then opens a saved request to verify its restored configuration. Automatic history is not connected yet. Screenshots are saved under `test-results/`. No external API or real API credentials are needed. The first native encryption operation may request Keychain access.
+The desktop test opens Electron using a temporary profile and checks the complete HTTP workflow, collections, saved configurations, and history. It verifies real macOS encryption, absence of made-up credentials from database bytes, pagination, and smaller-window layouts. It stops the API, opens snapshots without network calls, then quits/reopens the app and checks both saved requests and historical responses. A simulated database write failure confirms that the HTTP response survives without an automatic retry. Screenshots are saved under `test-results/`. No external API or real API credentials are needed. The first native encryption operation may request Keychain access.
 
 ## College delivery
 
@@ -169,20 +188,25 @@ Signing and notarizing for public macOS distribution are a separate release task
 | File | Responsibility |
 | --- | --- |
 | `electron/main.cjs` | Desktop window, local interface loading, SQLite lifecycle, trusted IPC handlers |
-| `electron/preload.cjs` | Exposes the six approved request/collection operations on `window.reqdelta` |
+| `electron/preload.cjs` | Exposes eight approved request, collection, and history operations on `window.reqdelta` |
 | `electron/request-service.cjs` | Validates requests, fetches responses, limits size/time, returns results |
+| `electron/request-config.cjs` | Copies and bounds supported configuration fields for saving and execution |
+| `electron/request-runner.cjs` | Executes once, records history, and keeps storage warnings separate from the result |
 | `electron/collections-service.cjs` | Validates collection names and inserts/lists rows with prepared SQL |
 | `electron/saved-requests-service.cjs` | Validates, saves, lists, and restores request configurations without executing them |
+| `electron/history-service.cjs` | Encrypts execution snapshots, reads history, pages metadata, and prunes old entries transactionally |
 | `electron/secure-storage.cjs` | Serializes configurations and delegates encryption/decryption to macOS through Electron |
 | `electron/database.cjs` | Opens SQLite, applies pending migrations transactionally, and checks the schema version |
 | `electron/migrations/001-initial.sql` | Tables, relationships, constraints, and indexes for schema version 1 |
 | `electron/migrations/002-protected-requests.sql` | Encrypted saved-request layout for schema version 2 |
+| `electron/migrations/003-protected-history.sql` | Encrypted execution-history layout for schema version 3 |
 | `src/App.jsx` | Request form, loading/error state, calling the bridge |
 | `src/components/ResponsePanel.jsx` | Response body, headers, and pretty/raw viewing |
 | `src/components/KeyValueEditor.jsx` | Shared name/value rows for query parameters and request headers |
 | `src/components/JsonBodyEditor.jsx` | None/JSON body selection, draft editing, and sample insertion |
 | `src/components/CollectionsPanel.jsx` | Creates collections, expands their saved requests, and opens a chosen request |
 | `src/components/SaveRequestForm.jsx` | Collection selection, request naming, save/cancel actions, and save errors |
+| `src/components/HistoryPanel.jsx` | Paginated execution list, outcome summaries, and snapshot opening |
 | `src/components/Icon.jsx` | Small inline interface icons |
 | `src/styles.css` | Interface layout and appearance |
 | `scripts/dev.cjs` | Starts Vite and Electron together |
@@ -193,6 +217,8 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `tests/collections-service.test.mjs` | Collection validation, SQL parameter binding, ordering, Unicode limits, and storage failures |
 | `tests/saved-requests-service.test.mjs` | Saved configurations, grouping, validation, missing/corrupt records, and non-execution |
 | `tests/secure-storage.test.mjs` | Native encryption delegation, unavailable storage, and key rotation handling |
+| `tests/request-runner.test.mjs` | Validation before execution, one HTTP attempt, failure outcomes, and separate history warnings |
+| `tests/history-service.test.mjs` | Independent snapshots, metadata paging, retention, rollback, unreadable data, and parent deletion |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

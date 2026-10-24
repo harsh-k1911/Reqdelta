@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('reqdelta', {
   createSavedRequest: (input) => ipcRenderer.invoke('saved-requests:create', input),
   listSavedRequests: (input) => ipcRenderer.invoke('saved-requests:list', input),
   getSavedRequest: (input) => ipcRenderer.invoke('saved-requests:get', input),
+  listHistory: (input) => ipcRenderer.invoke('history:list', input),
+  getHistoryEntry: (input) => ipcRenderer.invoke('history:get', input),
 });

@@ -6,6 +6,8 @@ const { openDatabase } = require('./database.cjs');
 const { listCollections, createCollection } = require('./collections-service.cjs');
 const { createSecureStorage } = require('./secure-storage.cjs');
 const { createSavedRequestsService } = require('./saved-requests-service.cjs');
+const { createHistoryService } = require('./history-service.cjs');
+const { createRequestRunner } = require('./request-runner.cjs');
 
 const APP_URL = 'reqdelta://app/index.html';
 const DEV_URL = !app.isPackaged && process.env.REQDELTA_DEV_URL;
@@ -90,9 +92,12 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler(() => false);
 
   // Each bridge function gets one specific channel, never arbitrary IPC access.
+  const secureStorage = createSecureStorage(safeStorage);
+  const history = createHistoryService(database, secureStorage);
+  const runRequest = createRequestRunner(executeRequest, history);
   ipcMain.handle('requests:send', (event, request) => {
     if (!isTrustedSender(event)) return forbidden();
-    return executeRequest(request);
+    return runRequest(request);
   });
   ipcMain.handle('collections:list', (event) => {
     if (!isTrustedSender(event)) return forbidden();
@@ -102,7 +107,7 @@ app.whenReady().then(() => {
     if (!isTrustedSender(event)) return forbidden();
     return createCollection(database, input);
   });
-  const savedRequests = createSavedRequestsService(database, createSecureStorage(safeStorage));
+  const savedRequests = createSavedRequestsService(database, secureStorage);
   ipcMain.handle('saved-requests:create', (event, input) => {
     if (!isTrustedSender(event)) return forbidden();
     return savedRequests.create(input);
@@ -114,6 +119,14 @@ app.whenReady().then(() => {
   ipcMain.handle('saved-requests:get', (event, input) => {
     if (!isTrustedSender(event)) return forbidden();
     return savedRequests.get(input);
+  });
+  ipcMain.handle('history:list', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return history.list(input);
+  });
+  ipcMain.handle('history:get', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return history.get(input);
   });
 
   createWindow();

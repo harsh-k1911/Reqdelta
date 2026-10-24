@@ -340,7 +340,7 @@ The basic request-building phase is complete. The SQLite storage foundation is c
 
 ## Lesson 6: SQLite storage foundation
 
-Schema note: this lesson describes the version 1 foundation at that checkpoint. Lesson 8 upgrades saved requests to version 2 with encrypted configuration storage. The current `db:demo` uses placeholder BLOB bytes for its made-up saved request; only Electron performs real encryption.
+Schema note: this lesson describes the version 1 foundation at that checkpoint. Lesson 8 upgrades saved requests to version 2; Lesson 9 upgrades history to version 3. The current `db:demo` uses placeholder BLOB bytes for both its made-up saved request and execution snapshot. Only Electron performs real encryption.
 
 React state is temporary: quitting the app loses the current screen data. SQLite writes records into a local database file, so they can be read by a later connection or app run. This checkpoint creates the database and its structure; the interface does not save requests or history yet.
 
@@ -391,7 +391,7 @@ Closed the database. Reopening the same file...
 Read back: Student API → Get student → HTTP 200
 ```
 
-In `scripts/database-demo.cjs`, statements use `?` placeholders and `.run(...)` arguments. Those **bound parameters** keep values separate from SQL text. `.get()` reads one result, and `.all()` reads a list of results. `JSON.stringify` stores a JavaScript snapshot as text; SQL's `json_extract` reads its status in the demonstration query.
+In `scripts/database-demo.cjs`, statements use `?` placeholders and `.run(...)` arguments. Those **bound parameters** keep values separate from SQL text. `.get()` reads one result, and `.all()` reads a list of results. The current demonstration reads the status metadata column through a join; its BLOBs are opaque placeholders. The real app serializes and encrypts configurations/snapshots as explained in Lessons 8 and 9.
 
 Try changing the example collection or request name and run the exercise again. Each run uses a fresh file and prints its path. It does not seed your actual workspace or make a real network request.
 
@@ -463,6 +463,8 @@ Public distribution adds signing and notarization work; that is separate from ou
 
 ## Lesson 8: save and restore request configurations
 
+Checkpoint note: Lesson 8 describes the application before automatic history. Lesson 9 adds execution snapshots; `copyRequest` now lives in `electron/request-config.cjs` so saving and execution share the same bounded configuration copy.
+
 A **request configuration** is the set of inputs needed to make a request: method, original URL, query rows, headers, and body mode/text. A **response** is what the server returns after execution. This checkpoint persists configurations only. Saving or opening one does not contact the API, and it does not save a response or create history.
 
 ### The new database layout
@@ -529,4 +531,73 @@ Verification passed: all 176 tests, the production build, the database exercise,
 
 Message: `feat(requests): save and restore encrypted request configurations`
 
-Next checkpoint: record execution history and inspect saved response snapshots.
+Execution history and stored response inspection are covered in Lesson 9 below.
+
+## Lesson 9: execution history and response snapshots
+
+A saved request is a reusable configuration. A history entry is a copy of the configuration and the outcome of **one execution**. Executing a saved request twice creates two history entries. Unsaved requests get history too. Changing a later draft does not change either earlier snapshot.
+
+### Trace one Send action
+
+1. `App` sends the configuration and an optional `savedRequestId` through the existing `sendRequest` bridge. A modified draft may still link to its originating saved request; its snapshot captures the inputs actually used.
+2. The trusted main-process handler calls `request-runner.cjs`. It uses `copyRequest` from `request-config.cjs` to validate, copy supported fields, and enforce the 2 MiB configuration limit before making any HTTP call. Invalid input returns an error without history.
+3. The runner records a start timestamp, then calls the existing `executeRequest` service **once**. An HTTP response, including 404, is `ok: true`. A timeout, network failure, or response-size failure is an error outcome.
+4. For a response, the existing duration measures receiving headers and body. For a failure, the runner measures elapsed attempt time. The later encryption/database time is not added to the HTTP duration.
+5. `history-service.cjs` copies the configuration and serializes `{ version: 1, request, outcome }`. The existing secure-storage adapter encrypts that whole snapshot, including response headers/body or the failure message. The serialized snapshot has a 16 MiB limit.
+6. After encryption finishes, the service starts a short SQLite transaction, inserts the encrypted snapshot and readable metadata, prunes older entries if required, and commits. Neither network I/O nor an encryption await occurs while that transaction is open.
+7. The runner returns the HTTP outcome with a separate `history` result. React renders the response or request error and refreshes history after a successful insert.
+
+### A history failure is separate from an HTTP failure
+
+Suppose a POST reaches the API and returns HTTP 200, but SQLite cannot save its snapshot. Reporting only a request error could encourage repeating an operation that the server already completed.
+
+The runner preserves the HTTP outcome and returns `history: { saved: false, message }`. The interface shows **History was not saved** alongside the response. There is no automatic HTTP retry. If the API itself failed too, the original request error is still shown. Unit tests and an actual desktop database-failure check verify this behavior.
+
+### Schema version 3
+
+`003-protected-history.sql` replaces the previously unused history layout. The readable metadata is ID, optional saved-request ID, method, status/error code, duration, and start time. `snapshot_encrypted` stores the protected request/outcome bytes. There are no plaintext URL, response-body, response-header, or error-message columns.
+
+The SQL check permits either a status code or an error code. An HTTP 404 is the status-code case; a network failure has no inspectable HTTP response and uses the error-code case.
+
+A version 2 app workspace upgrades without changing its existing encrypted saved-request bytes. The old interfaces did not create history. Unexpected manually inserted older history causes the upgrade to stop and preserve the file rather than delete those records. Versions 1 and 2 migration files stay unchanged. Startup still applies pending migrations and version changes in one transaction.
+
+The foreign key is optional and uses `ON DELETE SET NULL`. Removing a saved request or its collection can detach the link, while the encrypted execution copy stays available. The history list uses a linked request's current name when it exists; that label is separate from the stored configuration and outcome.
+
+### Retention and transactions
+
+History retains the newest 100 entries within 50 MiB of encrypted snapshot bytes. After inserting, the service reads IDs and BLOB lengths in descending ID order, accumulates their sizes, and removes entries beyond either limit. This measures retained payloads; SQLite's physical file can remain larger while pages wait to be reused.
+
+The insert and pruning share a transaction. If pruning fails, rollback also removes the attempted insert, leaving existing history intact. If encryption fails, no transaction begins and no plaintext fallback is used. The unit tests lower the limits to verify count-based and byte-based pruning without filling the real workspace.
+
+Snapshots keep their captured content until retention removes the record. Opening one does not update its contents. The only internal rewrite is equivalent ciphertext when the native key provider requests re-encryption.
+
+### Listing and opening history
+
+`HistoryPanel` loads 20 metadata rows through `listHistory`. It does not decrypt every response just to draw a list. Pagination uses the last visible ID as `beforeId`: the next query reads IDs below it. This avoids duplicate rows if a new execution arrives between pages. The query uses bound values and a fixed page size.
+
+Clicking Open calls `getHistoryEntry({ id })`. The main process decrypts and checks the payload, then returns its request and outcome. `App` restores them into the builder, shows a **Saved execution** banner, and does not call Send. This works even when the API is stopped and after the desktop app has restarted.
+
+Opening history creates an independent draft, without modifying a saved request. Editing the URL, method, parameter rows, headers, or body clears the historical result from the screen. Pressing Send explicitly executes that draft again and creates a new history entry. The original snapshot remains unchanged.
+
+The bridge now has eight narrow operations. The two additions read history: `listHistory` and `getHistoryEntry`. There is no public history-insert operation; recording occurs inside the main-process runner after execution. The dependency passed into the runner lets unit tests substitute an executor and history writer without making real network calls.
+
+### Practise it
+
+1. Restart the desktop app to load the new handlers and migration. Existing collections and saved requests should remain.
+2. Start the demo API, choose Student JSON, and send. Add the query parameter `version=2` and send again. You now have two execution snapshots with different student JSON.
+3. Choose History and open the earlier entry. It should contain `name` and numeric `age: 20`. Open the later one and find `fullName` and string `age: "20"`.
+4. Stop the demo API and open those entries again. Explain why they still display even though sending would fail.
+5. Try sending while the server is stopped, then inspect that failure in History. Explain why it has an error code rather than HTTP 404.
+6. Quit with Command+Q, reopen, and inspect a response snapshot. Edit its URL and observe the saved-execution banner and displayed response clear. Open the entry again to confirm that its stored content did not change.
+
+Checkpoint questions: How does a saved request differ from a history entry? Why store a copy rather than only a foreign key? Why does a 404 have a response snapshot? Why must a storage failure never trigger an automatic POST retry? Why encrypt before starting the SQL transaction? What does an ID cursor solve? What happens when either retention limit is reached?
+
+### Git checkpoint 9
+
+Verification passed: all 210 tests, the production build, the database exercise, and the desktop check. Checks cover encrypted responses/failures, independent snapshots, cursor paging, both retention limits, rollback, existing-workspace upgrades, offline inspection after restarting, and a real history-write failure that preserves the HTTP response without retrying it. The previous request-builder, collection, and saved-request flows still pass.
+
+**Commit now** after completing the exercise. Include the new history migration/service, request runner, shared configuration module, History panel, and new tests, along with main/preload/App integration, response states, icons/styles, updated database checks/demo, desktop check, README, and this lesson.
+
+Message: `feat(history): persist encrypted execution snapshots`
+
+Next checkpoint: recursively compare two stored JSON responses.
