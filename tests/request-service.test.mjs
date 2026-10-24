@@ -166,3 +166,88 @@ describe('query parameters', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('request headers', () => {
+  function mockFetch() {
+    const fetchMock = vi.fn(async () => new Response('{"message":"received"}'));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function header(key, value, enabled = true) {
+    return { key, value, enabled };
+  }
+
+  it('sends enabled application headers and normalizes their names', async () => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, headers: [header(' Accept ', ' application/json '), header('Authorization', 'Bearer demo-token'), header('X-Demo-Client', 'ReqDelta')] });
+    expect(result.ok).toBe(true);
+    const sent = fetchMock.mock.calls[0][1].headers;
+    expect(Object.fromEntries(sent)).toEqual({ accept: 'application/json', authorization: 'Bearer demo-token', 'x-demo-client': 'ReqDelta' });
+  });
+
+  it('ignores disabled and entirely blank rows but sends a named empty value', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, headers: [header('X-Skip', 'unused', false), header('', ''), header('X-Empty', '')] });
+    expect(Object.fromEntries(fetchMock.mock.calls[0][1].headers)).toEqual({ 'x-empty': '' });
+  });
+
+  it('rejects repeated enabled names without regard to capitalization', async () => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, headers: [header('Accept', 'application/json'), header('accept', 'text/plain')] });
+    expect(result.error.code).toBe('INVALID_HEADERS');
+    expect(result.error.message).toContain('repeated');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a disabled duplicate without changing or merging the enabled value', async () => {
+    const fetchMock = mockFetch();
+    await executeRequest({ ...request, headers: [header('Accept', 'application/json'), header('accept', 'text/plain', false)] });
+    expect(fetchMock.mock.calls[0][1].headers.get('accept')).toBe('application/json');
+  });
+
+  it.each(['Host', 'Content-Length', 'Transfer-Encoding', 'Connection', 'Keep-Alive', 'TE', 'Trailer', 'Upgrade', 'Expect', 'Proxy-Connection'])('rejects the client-managed %s header before a network call', async (name) => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, headers: [header(name, 'value')] });
+    expect(result.error.code).toBe('INVALID_HEADERS');
+    expect(result.error.message).toContain('automatically');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a value without a name', [header('', 'value')]],
+    ['a whitespace-only name', [header('   ', 'value')]],
+    ['a name containing spaces', [header('Bad Name', 'value')]],
+    ['a name containing a colon', [header('Bad:Name', 'value')]],
+    ['a value containing a newline', [header('X-Test', 'first\r\nX-Injected: second')]],
+    ['a value containing a null byte', [header('X-Test', 'bad\u0000value')]],
+    ['a value containing unsupported characters', [header('X-Test', '😀')]],
+    ['a non-array list', { Accept: 'application/json' }],
+    ['a null list', null],
+    ['a null row', [null]],
+    ['a non-string name', [header(1, 'value')]],
+    ['a non-string value', [header('X-Test', 1)]],
+    ['a missing enabled flag', [{ key: 'X-Test', value: 'value' }]],
+  ])('rejects %s before a network call', async (_description, headers) => {
+    const fetchMock = mockFetch();
+    const result = await executeRequest({ ...request, headers });
+    expect(result.error.code).toBe('INVALID_HEADERS');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not expose header values in validation error messages', async () => {
+    mockFetch();
+    const result = await executeRequest({ ...request, headers: [header('Authorization', 'private-demo-secret\r\nInjected: value')] });
+    expect(result.error.code).toBe('INVALID_HEADERS');
+    expect(result.error.message).not.toContain('private-demo-secret');
+  });
+
+  it('does not mutate the row list or accumulate headers across sends', async () => {
+    const fetchMock = mockFetch();
+    const input = Object.freeze({ ...request, headers: Object.freeze([Object.freeze(header('X-Demo', 'one'))]) });
+    await executeRequest(input);
+    await executeRequest(input);
+    expect(fetchMock.mock.calls.map(([, options]) => Object.fromEntries(options.headers))).toEqual([{ 'x-demo': 'one' }, { 'x-demo': 'one' }]);
+    expect(input.headers[0].key).toBe('X-Demo');
+  });
+});

@@ -10,6 +10,7 @@ function createDemoServer() {
         method: request.method,
         path: url.pathname,
         queryParams: Array.from(url.searchParams, ([key, value]) => ({ key, value })),
+        headers: request.headers,
       }));
       return;
     }

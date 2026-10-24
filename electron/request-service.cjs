@@ -1,14 +1,48 @@
 const { performance } = require('node:perf_hooks');
+const { validateHeaderName, validateHeaderValue } = require('node:http');
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const SUPPORTED_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
+const MANAGED_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'te', 'trailer', 'upgrade', 'expect', 'proxy-connection']);
 
 class RequestError extends Error {
   constructor(code, message) {
     super(message);
     this.code = code;
   }
+}
+
+function buildHeaders(rows = []) {
+  if (!Array.isArray(rows)) {
+    throw new RequestError('INVALID_HEADERS', 'Request headers must be a list of name/value rows.');
+  }
+  const headers = new Headers();
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row.key !== 'string' || typeof row.value !== 'string' || typeof row.enabled !== 'boolean') {
+      throw new RequestError('INVALID_HEADERS', `Header ${index + 1} has an invalid name, value, or enabled flag.`);
+    }
+    if (!row.enabled || (row.key === '' && row.value === '')) continue;
+    const name = row.key.trim();
+    if (!name) {
+      throw new RequestError('INVALID_HEADERS', `Header ${index + 1} needs a name. Enter one or disable the row.`);
+    }
+    try {
+      validateHeaderName(name);
+      validateHeaderValue(name, row.value);
+    } catch {
+      // Native validation errors can include the value; don't expose a credential.
+      throw new RequestError('INVALID_HEADERS', `Header ${index + 1} has an invalid name or value. Use a valid header name and a value without line breaks or unsupported characters.`);
+    }
+    if (MANAGED_HEADERS.has(name.toLowerCase())) {
+      throw new RequestError('INVALID_HEADERS', `The HTTP client manages the ${name} header automatically.`);
+    }
+    if (headers.has(name)) {
+      throw new RequestError('INVALID_HEADERS', `Header ${name} is repeated. Keep one enabled row for each header name.`);
+    }
+    headers.set(name, row.value);
+  }
+  return headers;
 }
 
 function validateRequest(request) {
@@ -46,7 +80,7 @@ function validateRequest(request) {
     // append preserves repeated names and safely encodes spaces, &, +, and Unicode.
     url.searchParams.append(param.key, param.value);
   }
-  return { url: url.href, method: request.method };
+  return { url: url.href, method: request.method, headers: buildHeaders(request.headers) };
 }
 
 async function readBody(response, controller, maxBytes) {
@@ -77,11 +111,11 @@ async function executeRequest(request, options = {}) {
   const controller = new AbortController();
   let timer;
   try {
-    const { url, method } = validateRequest(request);
+    const { url, method, headers } = validateRequest(request);
     const startedAt = performance.now();
     // The timeout covers downloading the body as well as receiving headers.
     timer = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(url, { method, signal: controller.signal, redirect: 'follow' });
+    const response = await fetch(url, { method, headers, signal: controller.signal, redirect: 'follow' });
     const { body, sizeBytes } = await readBody(response, controller, maxBytes);
     let format = 'text';
     try {

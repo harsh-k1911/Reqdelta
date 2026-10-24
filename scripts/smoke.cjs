@@ -34,13 +34,15 @@ async function run() {
     const url = page.getByRole('textbox', { name: 'Request URL' });
     const method = page.getByRole('combobox', { name: 'HTTP method' });
     const send = page.getByRole('button', { name: 'Send request' });
+    const requestOptions = page.getByRole('tablist', { name: 'Request options' });
+    const responseDetails = page.getByRole('tablist', { name: 'Response details' });
     await url.fill(`${origin}/students/101`);
     await send.click();
     await page.getByText('200 OK', { exact: true }).waitFor();
     assert.match(await page.locator('#response-body').innerText(), /"name": "Rahul"/);
-    await page.getByRole('tab', { name: /Headers/ }).click();
+    await responseDetails.getByRole('tab', { name: /Headers/ }).click();
     await page.getByRole('cell', { name: 'content-type', exact: true }).waitFor();
-    await page.getByRole('tab', { name: 'Body', exact: true }).click();
+    await responseDetails.getByRole('tab', { name: 'Body', exact: true }).click();
     await page.getByRole('button', { name: 'Pretty', exact: true }).click();
     assert.match(await page.locator('#response-body').innerText(), /"name":"Rahul"/);
     await page.getByRole('button', { name: 'Raw', exact: true }).click();
@@ -107,6 +109,75 @@ async function run() {
     await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
     assert.equal(await page.getByRole('textbox', { name: /^Parameter \d+ name$/ }).count(), 0);
 
+    await page.getByRole('button', { name: 'Method echo', exact: true }).click();
+    await url.fill(`${origin}/echo`);
+    await addParam.click();
+    await page.getByRole('textbox', { name: 'Parameter 1 name', exact: true }).fill('page');
+    await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).fill('2');
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    const addHeader = page.getByRole('button', { name: 'Add header' });
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 1 name', exact: true }).fill('Accept');
+    await page.getByRole('textbox', { name: 'Header 1 value', exact: true }).fill('application/json');
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 2 name', exact: true }).fill('X-Demo-Client');
+    await page.getByRole('textbox', { name: 'Header 2 value', exact: true }).fill('ReqDelta');
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 3 name', exact: true }).fill('X-Skip');
+    await page.getByRole('textbox', { name: 'Header 3 value', exact: true }).fill('disabled value');
+    await page.getByRole('checkbox', { name: 'Enable header 3', exact: true }).uncheck();
+    await addHeader.click();
+
+    await requestOptions.getByRole('tab', { name: 'Params', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: 'Parameter 1 value', exact: true }).inputValue(), '2');
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: 'Header 2 value', exact: true }).inputValue(), 'ReqDelta');
+    await send.click();
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    const echoedHeaders = JSON.parse(await page.locator('#response-body').innerText());
+    assert.equal(echoedHeaders.headers.accept, 'application/json');
+    assert.equal(echoedHeaders.headers['x-demo-client'], 'ReqDelta');
+    assert.equal(echoedHeaders.headers['x-skip'], undefined);
+    assert.deepEqual(echoedHeaders.queryParams, [{ key: 'page', value: '2' }]);
+    await page.screenshot({ path: 'test-results/desktop-request-headers.png' });
+
+    await page.getByRole('textbox', { name: 'Header 4 name', exact: true }).fill('accept');
+    await page.getByRole('textbox', { name: 'Header 4 value', exact: true }).fill('text/plain');
+    await send.click();
+    await page.getByRole('alert').filter({ hasText: 'repeated' }).waitFor();
+    await page.getByRole('checkbox', { name: 'Enable header 4', exact: true }).uncheck();
+    await page.getByRole('textbox', { name: 'Header 2 name', exact: true }).fill('Bad Name');
+    await send.click();
+    await page.getByRole('alert').filter({ hasText: 'invalid name or value' }).waitFor();
+    await page.getByRole('textbox', { name: 'Header 2 name', exact: true }).fill('X-Demo-Client');
+    await page.getByRole('textbox', { name: 'Header 1 name', exact: true }).fill('Content-Length');
+    await send.click();
+    await page.getByRole('alert').filter({ hasText: 'manages the Content-Length header automatically' }).waitFor();
+
+    await page.getByRole('button', { name: 'Remove header 1', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: 'Header 1 name', exact: true }).inputValue(), 'X-Demo-Client');
+    assert.equal(await page.getByRole('checkbox', { name: 'Enable header 2', exact: true }).isChecked(), false);
+    await addHeader.click();
+    await page.getByRole('textbox', { name: 'Header 4 name', exact: true }).fill('X-Empty');
+    await page.getByRole('textbox', { name: 'Header 4 value', exact: true }).press('Meta+Enter');
+    await page.getByText('200 OK', { exact: true }).waitFor();
+    const afterRemoval = JSON.parse(await page.locator('#response-body').innerText());
+    assert.equal(afterRemoval.headers['x-demo-client'], 'ReqDelta');
+    assert.equal(afterRemoval.headers['x-empty'], '');
+    assert.equal(afterRemoval.headers['x-skip'], undefined);
+    assert.notEqual(afterRemoval.headers.accept, 'application/json');
+
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.locator('#response-body').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: 'test-results/desktop-request-headers-small.png' });
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    await page.getByRole('button', { name: 'Student JSON', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: /^Parameter \d+ name$/ }).count(), 0);
+    await requestOptions.getByRole('tab', { name: 'Headers', exact: true }).click();
+    assert.equal(await page.getByRole('textbox', { name: /^Header \d+ name$/ }).count(), 0);
+    await requestOptions.getByRole('tab', { name: 'Params', exact: true }).click();
+
     await method.selectOption('POST');
     await url.fill(`${origin}/students/101`);
     await send.click();
@@ -139,7 +210,7 @@ async function run() {
     assert.equal(await send.isEnabled(), true);
 
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: query encoding, duplicate names, existing URL parameters, row add/remove/disable, empty values, validation, parameter keyboard shortcut, small-window layout, example reset, all four HTTP methods, response viewing, and connection errors.');
+    console.log('Desktop checks passed: custom headers, header validation and duplicates, row add/remove/disable, empty headers, request tab persistence, combined query/header requests, keyboard shortcuts, smaller-window layout, example resets, all four HTTP methods, response viewing, and connection errors.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

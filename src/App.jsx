@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import Icon from './components/Icon.jsx';
 import ResponsePanel from './components/ResponsePanel.jsx';
-import QueryParamsEditor from './components/QueryParamsEditor.jsx';
+import KeyValueEditor from './components/KeyValueEditor.jsx';
 
 const DEMO_ORIGIN = 'http://127.0.0.1:3030';
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
@@ -16,6 +16,8 @@ export default function App() {
   const [url, setUrl] = useState(`${DEMO_ORIGIN}/students/101`);
   const [method, setMethod] = useState('GET');
   const [queryParams, setQueryParams] = useState([]);
+  const [requestHeaders, setRequestHeaders] = useState([]);
+  const [requestTab, setRequestTab] = useState('params');
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
   const [error, setError] = useState(null);
@@ -29,7 +31,7 @@ export default function App() {
     try {
       if (!window.reqdelta) throw new Error('Open ReqDelta in the desktop app to send requests.');
       // This calls preload, which forwards a message to the main process.
-      const result = await window.reqdelta.sendRequest({ method, url, queryParams });
+      const result = await window.reqdelta.sendRequest({ method, url, queryParams, headers: requestHeaders });
       if (result.ok) setResponse(result.response);
       else setError(result.error.message);
     } catch (error) {
@@ -43,12 +45,20 @@ export default function App() {
     setUrl(`${DEMO_ORIGIN}${path}`);
     if (exampleMethod) setMethod(exampleMethod);
     setQueryParams([]);
+    setRequestHeaders([]);
+    setRequestTab('params');
     setError(null);
     setResponse(null);
   }
 
   function handleParamsChange(params) {
     setQueryParams(params);
+    setError(null);
+    setResponse(null);
+  }
+
+  function handleHeadersChange(headers) {
+    setRequestHeaders(headers);
     setError(null);
     setResponse(null);
   }
@@ -89,7 +99,19 @@ export default function App() {
                 <button className="send-button" type="submit" disabled={loading}>{loading ? <><span className="spinner" /> Sending</> : <>Send request <Icon name="arrow" size={18} /></>}</button>
               </div>
               <div className="request-help"><span><span className="subtle-dot" /> HTTP {method} · No request body</span><kbd>⌘ Enter</kbd></div>
-              <QueryParamsEditor params={queryParams} onChange={handleParamsChange} disabled={loading} />
+              <div className="request-tabs" role="tablist" aria-label="Request options">
+                <button type="button" role="tab" id="request-params-tab" aria-controls="request-params" aria-selected={requestTab === 'params'} onClick={() => setRequestTab('params')}>Params</button>
+                <button type="button" role="tab" id="request-headers-tab" aria-controls="request-headers" aria-selected={requestTab === 'headers'} onClick={() => setRequestTab('headers')}>Headers</button>
+              </div>
+              {requestTab === 'params' ? (
+                <div role="tabpanel" id="request-params" aria-labelledby="request-params-tab">
+                  <KeyValueEditor title="Query parameters" itemLabel="Parameter" rows={queryParams} onChange={handleParamsChange} disabled={loading} namePlaceholder="e.g. page" valuePlaceholder="e.g. 1" help="URL parameters are kept. Enabled rows are appended when you send." />
+                </div>
+              ) : (
+                <div role="tabpanel" id="request-headers" aria-labelledby="request-headers-tab">
+                  <KeyValueEditor title="Request headers" itemLabel="Header" rows={requestHeaders} onChange={handleHeadersChange} disabled={loading} namePlaceholder="e.g. Accept" valuePlaceholder="e.g. application/json" help="Enabled headers are sent with this request. Header names are case-insensitive." />
+                </div>
+              )}
             </form>
           </section>
 

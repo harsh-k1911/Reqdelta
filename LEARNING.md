@@ -42,7 +42,7 @@ CommonJS and TypeScript describe different things. CommonJS is the `require()` /
 
 1. In `src/App.jsx`, pressing Send submits the form and calls `handleSend`.
 2. `setLoading(true)` causes React to render a disabled send button and a waiting state. `useState` holds this screen's current data.
-3. The UI calls `window.reqdelta.sendRequest({ method, url, queryParams })` and awaits the result. The selected method starts as GET; the extra query parameter list starts empty. `await` pauses this function until its promise settles; it does not freeze the whole application.
+3. The UI calls `window.reqdelta.sendRequest({ method, url, queryParams, headers: requestHeaders })` and awaits the result. The selected method starts as GET; extra query parameter and header lists start empty. `await` pauses this function until its promise settles; it does not freeze the whole application.
 4. In `electron/preload.cjs`, `ipcRenderer.invoke('requests:send', request)` sends a message to Electron's main process. IPC means inter-process communication.
 5. In `electron/main.cjs`, `ipcMain.handle('requests:send', ...)` receives that message. It checks the sender and then calls `executeRequest`.
 6. In `electron/request-service.cjs`, the service validates the URL, sends an HTTP GET request, reads the body, and returns a plain result object.
@@ -183,7 +183,7 @@ The ID identifies the row in React, while `key` and `value` are the actual query
 
 ### Follow the code
 
-1. `src/App.jsx` stores `queryParams` in state and passes it to `QueryParamsEditor`. Keeping request state in the parent lets the editor change rows and the Send handler read the same list. This is called **lifting state up**.
+1. `src/App.jsx` stores `queryParams` in state and passes it to the row editor (originally `QueryParamsEditor`, now the shared `KeyValueEditor` introduced in Lesson 4). Keeping request state in the parent lets the editor change rows and the Send handler read the same list. This is called **lifting state up**.
 2. The editor's Add button creates a row with `crypto.randomUUID()` and returns a new array using `[...params, newRow]`. Spread syntax copies the existing entries into that new array.
 3. Editing a row uses `map()`. It returns a new object for the matching ID and keeps the other rows. Removing a row uses `filter()` to keep every row except that ID. We do not mutate the existing state array.
 4. `<tr key={param.id}>` gives React a stable identity for each row. The table can use row numbers in labels, but those changing numbers should not be the React keys when rows can be removed.
@@ -213,6 +213,63 @@ Verification passed: all 39 request-service tests, the production build, and the
 
 Message: `feat(requests): add query parameter editor`
 
-Include all changed files for this feature, including the new `src/components/QueryParamsEditor.jsx` file. Git does not include a new untracked file unless you select or add it.
+This checkpoint included the new `src/components/QueryParamsEditor.jsx` file, renamed to `KeyValueEditor.jsx` in Lesson 4. Git does not include a new untracked file unless you select or add it.
 
-Next separate checkpoint: the request header editor.
+The request header editor is the next checkpoint, covered in Lesson 4 below.
+
+## Lesson 4: request headers and reusable components
+
+Query parameters form part of the URL. Request headers are separate fields sent with the request. For example, `Accept: application/json` expresses the client's preferred response format; it does not guarantee that the server will return JSON. Header names are case-insensitive, so `Accept` and `accept` identify the same field. See the [HTTP field definitions](https://www.rfc-editor.org/rfc/rfc9110.html#name-field-names).
+
+Do not confuse the two Headers tabs. The one in the request editor configures what we send. The one in the response viewer displays what the server sent back. Setting a request header does not automatically make it a response header; our local `/echo` API deliberately repeats received headers inside its JSON body for inspection.
+
+### One row editor, two uses
+
+The old query-only component was renamed to `src/components/KeyValueEditor.jsx`. Both parameter and header rows need a name, value, checkbox, Add button, and Remove button. Reusing that interface keeps those behaviors in one place.
+
+`App` passes different **props** to configure each use: the title, row label, placeholders, help text, current row list, and change handler. The component does not decide how to send HTTP headers or construct URLs. Those rules stay in the main-process request service.
+
+The component's `useId()` creates IDs for its heading and help text. These accessibility IDs are different from each row's `crypto.randomUUID()` ID, which provides a stable React list key.
+
+### Follow the request
+
+1. `App` owns `requestHeaders` and `queryParams` as separate state arrays. `requestTab` selects which editor is visible. Both arrays remain in the parent, so switching tabs preserves what you entered.
+2. The header editor uses the same immutable `map`, `filter`, and array spread operations as the parameter editor. Its change handler updates `requestHeaders`.
+3. The Send handler adds `headers: requestHeaders` to the object passed through the existing preload bridge. No new IPC channel is needed.
+4. `validateRequest` calls `buildHeaders` in `electron/request-service.cjs`. It checks the list shape, ignores disabled and fully blank rows, and requires a name for any row containing a value.
+5. Node's `validateHeaderName` and `validateHeaderValue` check header syntax. This prevents malformed values, including line breaks, from reaching the HTTP client. Error messages identify the row without repeating its value. See [Node's header validation APIs](https://nodejs.org/api/http.html#httpvalidateheadernamename-label).
+6. `Headers` is a built-in collection for HTTP fields. We use `headers.has(name)` to detect duplicate enabled names regardless of case, then `headers.set(name, value)` to add each accepted field. This app rejects duplicates instead of silently combining or replacing their values.
+7. `fetch(url, { method, headers, ... })` sends the prepared fields. The demo server's `request.headers` object lets us verify what actually arrived. Its names appear in lowercase.
+
+### Rules for this version
+
+- Disabled rows and fully blank rows are skipped. A named header may have an empty value.
+- Header names are trimmed. The built-in `Headers` collection also trims surrounding whitespace from values.
+- Names must use valid HTTP field syntax; values cannot contain line breaks or characters unsupported by the HTTP client. Query encoding is not applied to header values.
+- Keep one enabled row per header name. Unlike query parameters, this editor does not support repeated enabled names.
+- `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Expect`, and `Proxy-Connection` are managed by the client and cannot be overridden in this version. They affect the connection or message framing. Application headers such as `Accept`, `Content-Type`, and `Authorization` are allowed.
+- Both request lists are cleared when choosing an example. Nothing is persisted yet.
+
+`Accept` describes the response format the client wants. `Content-Type` describes the content being sent. The next checkpoint will add a JSON body and use `Content-Type: application/json` for it.
+
+### Practise it
+
+1. Restart the demo API and desktop app to load the updated server and main-process service.
+2. Click **Method echo**, open the request's **Headers** tab, and add `X-Demo-Client` with value `ReqDelta`.
+3. Send and find `"x-demo-client": "ReqDelta"` in the response body's `headers` object.
+4. Disable the row and send again. The custom field should be absent. Enable it again to restore it.
+5. Add `Accept: application/json`, then add `accept: text/plain`. Send and explain why the duplicate produces a validation error. Disable one of them and try again.
+6. Switch to Params and add `page=2`. Switch back to Headers and confirm your rows remain. Send and find both the query parameter and custom header in the response body.
+7. Change a header name to `Bad Name` and send. Explain why the space is rejected here while a space in a query value can be encoded.
+
+Checkpoint questions: Which state belongs to `App`? What changes through props when the shared editor is used for headers? Why does the main process validate fields even though the UI uses text inputs? What is the difference between the request Headers tab and the response Headers tab?
+
+### Git checkpoint 4
+
+Verification passed: all 68 request-service tests, the production build, and the desktop check. The desktop check confirms real custom header delivery, disabled and empty fields, duplicate/invalid/managed-header errors, adding/removing rows, query/header tab persistence, combined requests, keyboard shortcuts, example resets, the smaller-window layout, and the existing request workflow.
+
+**Commit now.** Include all changes for this feature, including the removal of `QueryParamsEditor.jsx` and the new shared `KeyValueEditor.jsx`. Git can recognize the change as a rename after both paths are included.
+
+Message: `feat(requests): add custom request header editor`
+
+Next separate checkpoint: the JSON request body editor.
