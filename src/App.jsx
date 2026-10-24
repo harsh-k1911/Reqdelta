@@ -3,6 +3,7 @@ import Icon from './components/Icon.jsx';
 import ResponsePanel from './components/ResponsePanel.jsx';
 import KeyValueEditor from './components/KeyValueEditor.jsx';
 import JsonBodyEditor from './components/JsonBodyEditor.jsx';
+import CollectionsPanel from './components/CollectionsPanel.jsx';
 
 const DEMO_ORIGIN = 'http://127.0.0.1:3030';
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
@@ -79,7 +80,7 @@ export default function App() {
         <div className="brand"><span className="brand-mark">Δ</span><span>ReqDelta<span className="brand-period">.</span></span></div>
         <p className="workspace-label">YOUR WORKSPACE</p>
         <div className="sidebar-active" aria-current="page"><Icon name="request" /><span>Request builder</span><span className="active-indicator" /></div>
-        <div className="sidebar-note"><Icon name="layers" size={20} /><p>A little structure.<br />A lot more clarity.</p><span>Collections, history, and comparisons are coming in the next milestones.</span></div>
+        <CollectionsPanel />
         <div className="sidebar-bottom"><span className="local-dot" /><span>Local workspace</span><span className="version">v0.1</span></div>
       </aside>
 

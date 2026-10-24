@@ -3,11 +3,20 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { executeRequest } = require('./request-service.cjs');
 const { openDatabase } = require('./database.cjs');
+const { listCollections, createCollection } = require('./collections-service.cjs');
 
 const APP_URL = 'reqdelta://app/index.html';
 const DEV_URL = !app.isPackaged && process.env.REQDELTA_DEV_URL;
 let mainWindow;
 let database;
+
+function isTrustedSender(event) {
+  return event.sender === mainWindow?.webContents
+    && event.senderFrame === event.sender.mainFrame
+    && event.senderFrame?.url === (DEV_URL || APP_URL);
+}
+
+const forbidden = () => ({ ok: false, error: { code: 'FORBIDDEN', message: 'Request sender was not accepted.' } });
 
 // Register before Electron is ready so our local app has a normal, secure origin.
 protocol.registerSchemesAsPrivileged([
@@ -80,11 +89,16 @@ app.whenReady().then(() => {
 
   // Each bridge function gets one specific channel, never arbitrary IPC access.
   ipcMain.handle('requests:send', (event, request) => {
-    const trusted = event.sender === mainWindow?.webContents
-      && event.senderFrame === event.sender.mainFrame
-      && event.senderFrame.url === (DEV_URL || APP_URL);
-    if (!trusted) return { ok: false, error: { code: 'FORBIDDEN', message: 'Request sender was not accepted.' } };
+    if (!isTrustedSender(event)) return forbidden();
     return executeRequest(request);
+  });
+  ipcMain.handle('collections:list', (event) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return listCollections(database);
+  });
+  ipcMain.handle('collections:create', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return createCollection(database, input);
   });
 
   createWindow();

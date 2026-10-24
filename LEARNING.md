@@ -403,4 +403,58 @@ Verification passed: all 116 tests, the production build, the isolated database 
 
 Message: `feat(storage): add versioned SQLite database foundation`
 
-The interface is unchanged in this checkpoint. No real requests or responses are stored yet. Next separate checkpoint: collection creation and listing through the main process, preload, and React interface.
+The interface was unchanged in this checkpoint. Collection creation and listing are covered in Lesson 7 below. Real requests and responses are still not stored yet.
+
+## Lesson 7: create and list collections
+
+A collection is a named group that will contain saved requests. This checkpoint implements the **Create** and **Read** parts of CRUD (Create, Read, Update, Delete). It uses the existing `collections` table, so its structure and schema version stay at 1. Request saving, renaming, and deletion are separate work.
+
+### Follow one creation
+
+1. In `src/components/CollectionsPanel.jsx`, **+** opens a controlled form. The input's `value` comes from `name` state; `onChange` updates that state. Cancel clears the draft without calling the bridge.
+2. Submitting calls `handleCreate`, which sets `saving` to disable repeated submissions and calls `window.reqdelta.createCollection({ name })`.
+3. `electron/preload.cjs` forwards that specific operation to `collections:create`. The bridge now exposes three functions: `sendRequest`, `listCollections`, and `createCollection`. It still exposes neither SQL nor `ipcRenderer`.
+4. `electron/main.cjs` checks the window, main frame, and page URL with `isTrustedSender`, then calls `createCollection(database, input)` in the collection service. HTTP and collection handlers share the same sender check.
+5. `electron/collections-service.cjs` validates the incoming object and name, trims surrounding whitespace, and allows 1–100 Unicode code points. `Array.from(name).length` counts an emoji such as 😀 once, whereas JavaScript's ordinary `.length` counts its two UTF-16 units. Null characters are rejected because SQLite string length treats them specially.
+6. The service prepares `INSERT INTO collections (name) VALUES (?) RETURNING ...` and calls `.get(name)`. Here `?` is a bound value. SQLite inserts the row and `RETURNING` gives us that same row's ID, name, and timestamps. `.get()` reads its single returned row.
+7. Only after SQLite succeeds does React prepend the returned record with `setCollections((current) => [result.collection, ...current])`. The functional update uses the latest list. `collection.id` is the permanent React list key, even if two records have the same name.
+8. The form closes on success. On failure it preserves your draft and displays a creation error; `finally` re-enables the controls.
+
+Bound parameters keep data separate from SQL instructions. A name such as `Harsh's API` is one text value; its apostrophe does not end an SQL string. The SQL field list is a constant in our code, while only the user's name is bound. React also displays names as text, so a name containing `<b>` does not become HTML.
+
+### How reopening restores the list
+
+`useState` alone cannot survive quitting. `useEffect` in `CollectionsPanel` loads collections when the component mounts. It calls `listCollections` through preload, and the service runs `SELECT ... ORDER BY id DESC` with `.all()`. `.all()` reads every returned row. IDs give a consistent newest-first order even when two rows have the same timestamp.
+
+The effect stores those database rows in React state. On a later app launch, the new component begins with an empty array and fills it from the same SQLite file. React is the screen's current view; SQLite is the persistent source.
+
+The effect has a cleanup function that sets `active = false`. An old asynchronous reply is then ignored if the component has unmounted or a retry has replaced the load. Creation happens in the submit handler, outside the effect, so mounting or retrying a list load cannot create a collection.
+
+Loading, load errors, creation errors, and successful notices are separate interface states. Retry changes `reload`, which causes the effect to run again. The main process returns short storage messages instead of raw SQL errors or file paths.
+
+### Practise it
+
+1. Restart the desktop app so the new main-process handlers and preload functions are loaded. This feature does not need the demo API.
+2. Create `Student API`, then create a second collection with your name. Notice that the newest appears first.
+3. Submit spaces alone. Explain why trimming produces an invalid empty name, even though the input contained characters. Correct the name and try again.
+4. Open the form, enter a name, and cancel. Explain why no database row appears.
+5. Quit with Command+Q and reopen. Trace how the collections return without relying on the previous React state.
+6. Read `createCollection` and point out the SQL placeholder and the separately supplied value. Explain why a collection ID is a better list key than its name.
+
+Checkpoint questions: Why validate in the main process? What does `RETURNING` return? How do `.get()` and `.all()` differ? What is the difference between initial loading in `useEffect` and creation in an event handler? Why does a second collection with the same name still have a different identity?
+
+### Git checkpoint 7
+
+Verification passed: all 134 tests, the production build, and the desktop check. Checks cover collection validation, SQL-looking names, Unicode limits, duplicate names, stable ordering, and storage failures, plus the existing database and HTTP behavior. The desktop check creates collections through the real bridge, verifies cancellation and the smaller-window layout, then quits and reopens the app to confirm that the same records load into the sidebar.
+
+**Commit now** after completing the exercise. Include the new collection service, sidebar component, and service tests, along with the main/preload bridge changes, App integration, icon, styles, desktop check, README, and this lesson.
+
+Message: `feat(collections): add persistent collection creation and listing`
+
+Next checkpoint: save a request configuration into a collection and load it back into the request builder.
+
+### Delivery question: does a desktop app need deployment?
+
+Your college accepts the app and its source code, so no hosted website is required. Packaging bundles the application with Electron into a macOS `.app` that runs without a development server; that is a later checkpoint. SQLite remains on the user's Mac. The demo API remains a separate local process, while requests to remote APIs need their usual network access. See [Electron application packaging](https://www.electronjs.org/docs/latest/tutorial/application-distribution).
+
+Public distribution adds signing and notarization work; that is separate from our current college delivery plan. See [Electron code signing](https://www.electronjs.org/docs/latest/tutorial/code-signing).

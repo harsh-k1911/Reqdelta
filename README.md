@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: the HTTP request builder and SQLite storage foundation.** The app creates its database and initial tables, but collection management, saving requests/history from the interface, and JSON comparison are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: the HTTP request builder and persistent collections.** You can create and list collections in the sidebar, and they survive app restarts. Saving requests/history from the interface and JSON comparison are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
@@ -48,6 +48,14 @@ For a body test, select **Method echo**, choose POST, open Body, select JSON, an
 
 React changes update while the app is running. Restart `npm run dev` after changing Electron's main process, preload, or request service. Restart `npm run demo` after changing the demo API. Use Control+C in the relevant terminal to stop either process, then run its command again. On macOS, closing the last window leaves the app running; use Command+Q to quit it.
 
+## Create a collection
+
+Click **+** beside **Collections**, enter a name such as `Student API`, and choose **Create collection** or press Enter. The main process trims surrounding whitespace, requires 1–100 Unicode code points, and rejects null characters. The new collection appears at the top of the sidebar after SQLite confirms the insert. Names are plain text, and duplicate names are allowed as separate records.
+
+Choose **Cancel** to discard the name without writing anything. Quit with Command+Q and reopen the app to check that your created collection is still listed. Collection creation works without the demo API running. Saving a request into a collection is the next separate checkpoint; the current list shows collection names only. Renaming and deleting collections are not implemented yet.
+
+Loading and creation failures have separate messages so a storage problem does not appear as an HTTP failure. A failed list load offers **Retry collections**.
+
 ## What works now
 
 - A real Electron desktop window with a React interface.
@@ -65,8 +73,9 @@ React changes update while the app is running. Restart `npm run dev` after chang
 - Command+Enter to send a request from the request form.
 - An offline demo API and automated request/desktop checks.
 - SQLite database creation, schema versioning, foreign keys, and connection cleanup on app quit.
+- Collection creation and listing through validated main-process operations, with persistence across app restarts.
 
-The app creates empty storage tables at startup. Requests and responses from the interface are not yet written to them. Those connections will be added in later checkpoints.
+The first startup creates empty storage tables. Collection names entered in the interface are now written to SQLite. Requests and responses from the interface are not yet stored; those connections will be added in later checkpoints.
 
 ## SQLite storage foundation
 
@@ -80,7 +89,7 @@ The main process opens `reqdelta.sqlite` in Electron's `app.getPath('userData')`
 
 Schema version 1 is applied in a transaction the first time the file opens. Later opens read the version instead of recreating the tables. Failed setup rolls back, and a database with a newer schema version is rejected without resetting it. A startup error shows a message and quits the app; it does not delete the database.
 
-The database connection stays in the main process. The renderer still only has its existing send-request bridge, with no direct database or arbitrary SQL access. This checkpoint adds no new screen or automatic request saving.
+The database connection stays in the main process. The preload exposes only `sendRequest`, `listCollections`, and `createCollection`. Each main-process handler checks the sender. The renderer has no direct database or arbitrary SQL access. Collection inserts use bound values rather than building SQL from user input. This feature uses the existing version 1 schema, so no new migration is needed.
 
 Run the learning exercise:
 
@@ -123,21 +132,29 @@ npm start
 npm run test:desktop
 ```
 
-The desktop test opens Electron using a temporary profile, checks the complete HTTP workflow against a local API, then quits and reopens the app to verify database persistence. It also confirms that request/history writes are not connected yet. Screenshots are saved under `test-results/`. No external API is needed.
+The desktop test opens Electron using a temporary profile and creates collections through the actual interface. It checks validation, cancellation, plain-text rendering, and the smaller-window layout, then checks the complete HTTP workflow against a local API. It quits and reopens the app to confirm that the same collection records load into the sidebar. Request/history writes are not connected yet. Screenshots are saved under `test-results/`. No external API is needed.
+
+## College delivery
+
+The college accepts a macOS desktop application and its source code. ReqDelta's local SQLite storage and request service do not require web hosting. We will package a macOS `.app` in a later checkpoint and verify the packaged version before submission; see [Electron's packaging documentation](https://www.electronjs.org/docs/latest/tutorial/application-distribution). The included demo API runs locally as a separate process. Remote APIs still require their normal network access.
+
+Signing and notarizing for public macOS distribution are a separate release task, described in [Electron's code signing guide](https://www.electronjs.org/docs/latest/tutorial/code-signing). They are outside the current college delivery scope.
 
 ## Code map
 
 | File | Responsibility |
 | --- | --- |
-| `electron/main.cjs` | Desktop window, local interface loading, trusted IPC handler |
-| `electron/preload.cjs` | Exposes the single `window.reqdelta.sendRequest()` operation |
+| `electron/main.cjs` | Desktop window, local interface loading, SQLite lifecycle, trusted IPC handlers |
+| `electron/preload.cjs` | Exposes the three approved request/collection operations on `window.reqdelta` |
 | `electron/request-service.cjs` | Validates requests, fetches responses, limits size/time, returns results |
+| `electron/collections-service.cjs` | Validates collection names and inserts/lists rows with prepared SQL |
 | `electron/database.cjs` | Opens SQLite, applies the initial migration transactionally, and checks the schema version |
 | `electron/migrations/001-initial.sql` | Tables, relationships, constraints, and indexes for schema version 1 |
 | `src/App.jsx` | Request form, loading/error state, calling the bridge |
 | `src/components/ResponsePanel.jsx` | Response body, headers, and pretty/raw viewing |
 | `src/components/KeyValueEditor.jsx` | Shared name/value rows for query parameters and request headers |
 | `src/components/JsonBodyEditor.jsx` | None/JSON body selection, draft editing, and sample insertion |
+| `src/components/CollectionsPanel.jsx` | Loads the collection list and handles creation, cancellation, and storage messages |
 | `src/components/Icon.jsx` | Small inline interface icons |
 | `src/styles.css` | Interface layout and appearance |
 | `scripts/dev.cjs` | Starts Vite and Electron together |
@@ -145,6 +162,7 @@ The desktop test opens Electron using a temporary profile, checks the complete H
 | `scripts/database-demo.cjs` | Isolated insert/close/reopen/read exercise using made-up records |
 | `tests/request-service.test.mjs` | Request validation and response/error tests |
 | `tests/database.test.mjs` | Real SQLite persistence, relationships, constraints, migration rollback, and existing-data protection |
+| `tests/collections-service.test.mjs` | Collection validation, SQL parameter binding, ordering, Unicode limits, and storage failures |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

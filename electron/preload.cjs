@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// The renderer can send a request, but cannot access Node or choose IPC channels.
+// Only specific operations cross the bridge; Node, SQL, and IPC stay private.
 contextBridge.exposeInMainWorld('reqdelta', {
   sendRequest: (request) => ipcRenderer.invoke('requests:send', request),
+  listCollections: () => ipcRenderer.invoke('collections:list'),
+  createCollection: (input) => ipcRenderer.invoke('collections:create', input),
 });

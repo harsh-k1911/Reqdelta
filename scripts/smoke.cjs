@@ -30,7 +30,7 @@ async function run() {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest']);
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection']);
 
     const storage = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -49,6 +49,62 @@ async function run() {
     assert.equal(storage.version, 1);
     assert.deepEqual(storage.tables, ['collections', 'request_history', 'saved_requests']);
     assert.equal(storage.collections, 0);
+
+    await page.getByText('No collections yet. Use + to create your first group.', { exact: true }).waitFor();
+    const newCollection = page.getByRole('button', { name: 'New collection', exact: true });
+    const collectionName = page.getByRole('textbox', { name: 'Collection name', exact: true });
+    const createCollection = page.getByRole('button', { name: 'Create collection', exact: true });
+    const collectionList = page.getByRole('list', { name: 'Collections', exact: true });
+    await newCollection.click();
+    await collectionName.fill('Do not save this');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await collectionName.waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.evaluate(() => window.reqdelta.listCollections()), { ok: true, collections: [] });
+
+    await newCollection.click();
+    await collectionName.fill('   ');
+    await createCollection.click();
+    await page.getByRole('alert').filter({ hasText: '1–100 characters' }).waitFor();
+    assert.equal(await collectionName.inputValue(), '   ');
+    assert.equal(await createCollection.isEnabled(), true);
+    await collectionName.fill('x'.repeat(101));
+    await createCollection.click();
+    await page.getByRole('alert').filter({ hasText: '1–100 characters' }).waitFor();
+
+    const collectionNames = ['Student API', "Harsh's café API 😀", '<b>Learning API</b>', 'x'.repeat(100)];
+    for (const [index, name] of collectionNames.entries()) {
+      if (index > 0) await newCollection.click();
+      await collectionName.fill(index === 0 ? `  ${name}  ` : name);
+      await collectionName.press('Enter');
+      await collectionList.getByText(name, { exact: true }).waitFor();
+      await collectionName.waitFor({ state: 'hidden' });
+    }
+    assert.deepEqual(await collectionList.getByRole('listitem').allTextContents(), [...collectionNames].reverse());
+    assert.equal(await collectionList.locator('b').count(), 0); // Names render as text, including markup.
+    assert.equal((await page.evaluate(() => window.reqdelta.createCollection({ name: 12 }))).error.code, 'INVALID_COLLECTION');
+    const createdCollections = await page.evaluate(() => window.reqdelta.listCollections());
+    assert.equal(createdCollections.ok, true);
+    assert.equal(createdCollections.collections.length, 4);
+    await fs.mkdir('test-results', { recursive: true });
+    await page.screenshot({ path: 'test-results/desktop-collections.png' });
+
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    await newCollection.click();
+    await collectionName.fill(' ');
+    await createCollection.click();
+    await page.getByRole('alert').filter({ hasText: '1–100 characters' }).waitFor();
+    await page.screenshot({ path: 'test-results/desktop-collection-form-small.png' });
+    await collectionList.getByText('Student API', { exact: true }).scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    assert.equal(await page.locator('.sidebar').evaluate((element) => element.scrollHeight <= element.clientHeight), true);
+    assert.equal(await collectionList.getByText('Student API', { exact: true }).evaluate((element) => {
+      const row = element.getBoundingClientRect();
+      const panel = element.closest('.collections-panel').getBoundingClientRect();
+      return row.height > 0 && row.top >= panel.top && row.bottom <= panel.bottom;
+    }), true);
+    await page.screenshot({ path: 'test-results/desktop-collections-small.png' });
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
 
     const url = page.getByRole('textbox', { name: 'Request URL' });
     const method = page.getByRole('combobox', { name: 'HTTP method' });
@@ -321,26 +377,23 @@ async function run() {
 
     assert.deepEqual(errors, []);
 
-    await desktop.evaluate(({ app }) => {
-      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
-      const path = process.getBuiltinModule('node:path');
-      const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
-      try {
-        database.prepare('INSERT INTO collections (name) VALUES (?)').run('Desktop persistence check');
-      } finally { database.close(); }
-    });
     await desktop.close();
     desktop = null;
     desktop = await electron.launch(launchOptions);
     const reopenedPage = await desktop.firstWindow();
+    reopenedPage.on('pageerror', (error) => errors.push(error.message));
     await reopenedPage.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
+    const reopenedList = reopenedPage.getByRole('list', { name: 'Collections', exact: true });
+    await reopenedList.getByText('Student API', { exact: true }).waitFor();
+    assert.deepEqual(await reopenedList.getByRole('listitem').allTextContents(), [...collectionNames].reverse());
+    assert.deepEqual(await reopenedPage.evaluate(() => window.reqdelta.listCollections()), createdCollections);
     const persisted = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
       const path = process.getBuiltinModule('node:path');
       const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
       try {
         return {
-          name: database.prepare('SELECT name FROM collections').get().name,
+          names: database.prepare('SELECT name FROM collections ORDER BY id').all().map((row) => row.name),
           count: database.prepare('SELECT count(*) AS total FROM collections').get().total,
           savedRequests: database.prepare('SELECT count(*) AS total FROM saved_requests').get().total,
           history: database.prepare('SELECT count(*) AS total FROM request_history').get().total,
@@ -348,8 +401,9 @@ async function run() {
         };
       } finally { database.close(); }
     });
-    assert.deepEqual(persisted, { name: 'Desktop persistence check', count: 1, savedRequests: 0, history: 0, version: 1 });
-    console.log('Desktop checks passed: SQLite startup, isolated database, persistence across an app restart, no automatic request/history writes yet, and the complete HTTP request workflow.');
+    assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 0, history: 0, version: 1 });
+    assert.deepEqual(errors, []);
+    console.log('Desktop checks passed: collection creation/listing, validation and cancellation, smaller-window layout, UI persistence across an app restart, isolated SQLite storage, no automatic request/history writes yet, and the complete HTTP request workflow.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

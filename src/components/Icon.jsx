@@ -1,5 +1,6 @@
 export default function Icon({ name, size = 18, ...props }) {
   const paths = {
+    plus: <path d="M12 5v14M5 12h14" />,
     arrow: <><path d="M4 12h15M13 5l7 7-7 7" /></>,
     request: <><path d="m8 5-7 7 7 7M16 5l7 7-7 7M14 3l-4 18" /></>,
     layers: <><path d="m12 3 10 6-10 6L2 9l10-6ZM2 14l10 6 10-6M2 19l10 6 10-6" transform="translate(0 -1) scale(1 .9)" /></>,
