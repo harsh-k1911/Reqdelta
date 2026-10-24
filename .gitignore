@@ -6,3 +6,7 @@ test-results/
 *.log
 .env
 .env.*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*

@@ -16,20 +16,39 @@ async function run() {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.REQDELTA_DEV_URL;
+  const launchOptions = {
+    executablePath: require('electron'),
+    args: ['.', `--user-data-dir=${userData}`],
+    cwd: path.join(__dirname, '..'),
+    env,
+  };
   let desktop;
   try {
-    desktop = await electron.launch({
-      executablePath: require('electron'),
-      args: ['.', `--user-data-dir=${userData}`],
-      cwd: path.join(__dirname, '..'),
-      env,
-    });
+    desktop = await electron.launch(launchOptions);
     const page = await desktop.firstWindow();
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
     assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest']);
+
+    const storage = await desktop.evaluate(({ app }) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+      const path = process.getBuiltinModule('node:path');
+      const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
+      try {
+        return {
+          directory: app.getPath('userData'),
+          version: database.prepare('PRAGMA user_version').get().user_version,
+          tables: database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all().map((row) => row.name),
+          collections: database.prepare('SELECT count(*) AS total FROM collections').get().total,
+        };
+      } finally { database.close(); }
+    });
+    assert.equal(storage.directory, path.resolve(userData));
+    assert.equal(storage.version, 1);
+    assert.deepEqual(storage.tables, ['collections', 'request_history', 'saved_requests']);
+    assert.equal(storage.collections, 0);
 
     const url = page.getByRole('textbox', { name: 'Request URL' });
     const method = page.getByRole('combobox', { name: 'HTTP method' });
@@ -301,7 +320,36 @@ async function run() {
     assert.equal(await send.isEnabled(), true);
 
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: JSON bodies with POST/PUT/DELETE, Unicode and exact body text, automatic/custom content type, invalid JSON recovery, None/GET draft behavior, sample/reset actions, combined params/headers/body, smaller-window layout, and the existing request workflow.');
+
+    await desktop.evaluate(({ app }) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+      const path = process.getBuiltinModule('node:path');
+      const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
+      try {
+        database.prepare('INSERT INTO collections (name) VALUES (?)').run('Desktop persistence check');
+      } finally { database.close(); }
+    });
+    await desktop.close();
+    desktop = null;
+    desktop = await electron.launch(launchOptions);
+    const reopenedPage = await desktop.firstWindow();
+    await reopenedPage.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
+    const persisted = await desktop.evaluate(({ app }) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+      const path = process.getBuiltinModule('node:path');
+      const database = new DatabaseSync(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
+      try {
+        return {
+          name: database.prepare('SELECT name FROM collections').get().name,
+          count: database.prepare('SELECT count(*) AS total FROM collections').get().total,
+          savedRequests: database.prepare('SELECT count(*) AS total FROM saved_requests').get().total,
+          history: database.prepare('SELECT count(*) AS total FROM request_history').get().total,
+          version: database.prepare('PRAGMA user_version').get().user_version,
+        };
+      } finally { database.close(); }
+    });
+    assert.deepEqual(persisted, { name: 'Desktop persistence check', count: 1, savedRequests: 0, history: 0, version: 1 });
+    console.log('Desktop checks passed: SQLite startup, isolated database, persistence across an app restart, no automatic request/history writes yet, and the complete HTTP request workflow.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

@@ -2,11 +2,11 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: HTTP request building with methods, query parameters, headers, and JSON bodies.** Collections, SQLite history, and JSON comparison are planned next; they are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: the HTTP request builder and SQLite storage foundation.** The app creates its database and initial tables, but collection management, saving requests/history from the interface, and JSON comparison are not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
-Use a recent Node.js version compatible with Vite (22.12 or later). The initial setup was verified with Node 26.7 on Apple silicon macOS. Electron includes its own Node runtime for the desktop application.
+Use Node 24 or later for development; Node 22.13+ within the 22.x line is also supported by the package requirements. The setup and database checks were verified with Node 26.7 on Apple silicon macOS. Electron includes its own Node runtime: Electron 45 was separately checked with its bundled Node 24.22 and built-in SQLite support.
 
 From this project folder, install dependencies if needed:
 
@@ -64,8 +64,33 @@ React changes update while the app is running. Restart `npm run dev` after chang
 - Inspectable 4xx/5xx HTTP responses: these do not become connection errors.
 - Command+Enter to send a request from the request form.
 - An offline demo API and automated request/desktop checks.
+- SQLite database creation, schema versioning, foreign keys, and connection cleanup on app quit.
 
-No request or response data is saved by this milestone.
+The app creates empty storage tables at startup. Requests and responses from the interface are not yet written to them. Those connections will be added in later checkpoints.
+
+## SQLite storage foundation
+
+The main process opens `reqdelta.sqlite` in Electron's `app.getPath('userData')` directory. On a normal macOS profile this is typically `~/Library/Application Support/ReqDelta/reqdelta.sqlite`. It belongs to the app's local data directory rather than the source checkout. The desktop checks explicitly use a temporary profile with its own database.
+
+| Table | Prepared for |
+| --- | --- |
+| `collections` | Named groups of saved requests |
+| `saved_requests` | Request configuration linked to a collection |
+| `request_history` | Separate execution snapshots linked optionally to a saved request |
+
+Schema version 1 is applied in a transaction the first time the file opens. Later opens read the version instead of recreating the tables. Failed setup rolls back, and a database with a newer schema version is rejected without resetting it. A startup error shows a message and quits the app; it does not delete the database.
+
+The database connection stays in the main process. The renderer still only has its existing send-request bridge, with no direct database or arbitrary SQL access. This checkpoint adds no new screen or automatic request saving.
+
+Run the learning exercise:
+
+```sh
+npm run db:demo
+```
+
+It creates a fresh temporary database, inserts made-up collection/request/history records using prepared statements, closes the database, reopens it, and reads the records back. It prints the temporary file location for inspection. It makes no HTTP calls and does not use your app workspace database. Each run uses a new temporary file.
+
+Local `.sqlite`/`.db` files and their journal files are excluded by `.gitignore`; commit the migration SQL and application code.
 
 ## Local demo endpoints
 
@@ -98,7 +123,7 @@ npm start
 npm run test:desktop
 ```
 
-The desktop test opens and closes an Electron window, starts a temporary local API, and checks the actual UI-to-main-process request path. It checks parameter/header/body editing, JSON delivery and validation, Content-Type handling, draft preservation, the four methods, response/error behavior, and the smaller window layout. Screenshots are saved under `test-results/`. No external API is needed.
+The desktop test opens Electron using a temporary profile, checks the complete HTTP workflow against a local API, then quits and reopens the app to verify database persistence. It also confirms that request/history writes are not connected yet. Screenshots are saved under `test-results/`. No external API is needed.
 
 ## Code map
 
@@ -107,6 +132,8 @@ The desktop test opens and closes an Electron window, starts a temporary local A
 | `electron/main.cjs` | Desktop window, local interface loading, trusted IPC handler |
 | `electron/preload.cjs` | Exposes the single `window.reqdelta.sendRequest()` operation |
 | `electron/request-service.cjs` | Validates requests, fetches responses, limits size/time, returns results |
+| `electron/database.cjs` | Opens SQLite, applies the initial migration transactionally, and checks the schema version |
+| `electron/migrations/001-initial.sql` | Tables, relationships, constraints, and indexes for schema version 1 |
 | `src/App.jsx` | Request form, loading/error state, calling the bridge |
 | `src/components/ResponsePanel.jsx` | Response body, headers, and pretty/raw viewing |
 | `src/components/KeyValueEditor.jsx` | Shared name/value rows for query parameters and request headers |
@@ -115,7 +142,9 @@ The desktop test opens and closes an Electron window, starts a temporary local A
 | `src/styles.css` | Interface layout and appearance |
 | `scripts/dev.cjs` | Starts Vite and Electron together |
 | `scripts/demo-server.cjs` | Local API for learning and demonstrations |
+| `scripts/database-demo.cjs` | Isolated insert/close/reopen/read exercise using made-up records |
 | `tests/request-service.test.mjs` | Request validation and response/error tests |
+| `tests/database.test.mjs` | Real SQLite persistence, relationships, constraints, migration rollback, and existing-data protection |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

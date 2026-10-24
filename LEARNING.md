@@ -336,4 +336,71 @@ Verification passed: all 94 request-service tests, the production build, and the
 
 Message: `feat(requests): add validated JSON request body editor`
 
-The basic request-building phase is complete. The next separate checkpoint is the SQLite storage foundation, followed by collections, saved requests, and execution history in small steps. These persistence features are not implemented yet.
+The basic request-building phase is complete. The SQLite storage foundation is covered in Lesson 6 below. Collections, saved requests, and execution history will follow in small steps.
+
+## Lesson 6: SQLite storage foundation
+
+React state is temporary: quitting the app loses the current screen data. SQLite writes records into a local database file, so they can be read by a later connection or app run. This checkpoint creates the database and its structure; the interface does not save requests or history yet.
+
+We use `require('node:sqlite')` in the main process. Electron has its own Node runtime, so testing SQLite in the terminal's Node alone was not enough. We checked the module in Electron 45's bundled Node 24.22 as well. See [Node's SQLite API](https://nodejs.org/api/sqlite.html).
+
+### The three tables
+
+| Table | What one row represents | Relationship |
+| --- | --- | --- |
+| `collections` | One named request group | Can contain many saved requests |
+| `saved_requests` | One named request configuration | Requires an existing collection |
+| `request_history` | One execution snapshot or failure | May link to a saved request; can also represent an unsaved request |
+
+An **integer primary key** identifies each row. A **foreign key** links a child row to an existing parent row. `saved_requests.collection_id` references `collections.id`, and `request_history.saved_request_id` optionally references `saved_requests.id`. `NULL` in the history link means no saved request is associated.
+
+The deletion rules are explicit: deleting a collection deletes its saved requests (`ON DELETE CASCADE`). Deleting a saved request keeps its history, setting the optional link to NULL (`ON DELETE SET NULL`). History stores its own JSON copies, so editing a saved request does not change an older snapshot. See [SQLite foreign keys](https://www.sqlite.org/foreignkeys.html).
+
+### Follow database startup
+
+1. In `electron/main.cjs`, after Electron is ready, we choose the file under `app.getPath('userData')` and call `openDatabase`.
+2. `electron/database.cjs` creates the parent directory if needed, opens `DatabaseSync`, enables foreign-key enforcement, and sets a short wait for busy database locks.
+3. `BEGIN IMMEDIATE` starts a transaction before reading the schema version. This reserves the writer slot so two app starts cannot both decide to run the first migration at once.
+4. `PRAGMA user_version` reads our schema version number. A new database starts at 0. We reject versions newer than this app understands, leaving their data in place.
+5. For version 0, we read and execute `electron/migrations/001-initial.sql`, then set the version to 1.
+6. `COMMIT` saves the setup as one unit. If anything fails, `ROLLBACK` undoes the setup, the connection closes, and the error reaches the startup handler. The app shows the problem rather than replacing the database. See [SQLite transactions](https://www.sqlite.org/lang_transaction.html).
+7. Opening a version 1 database skips the initial migration. The app retains the connection until `will-quit`, where it closes it. On macOS, closing the window alone can leave the app running; Command+Q actually quits it.
+
+A **migration** is a versioned change to database structure. Once version 1 is applied, editing its SQL file will not reapply it to that database. Future structural changes need a later migration and version, not deleting the user's file.
+
+### Read the SQL file
+
+`NOT NULL` requires a value. `CHECK` enforces rules such as supported methods, nonblank names, valid JSON, and a nonnegative execution duration. Saved requests store query/header arrays as JSON text and keep body mode and text separately. History stores request and response objects as JSON snapshots.
+
+A history row contains either a response snapshot or an error code/message. An HTTP 404 is still a response snapshot; a network failure has no HTTP response. The SQL check prevents a record from claiming both outcomes or neither.
+
+Timestamps default to UTC strings. Their `updated_at` defaults apply when inserting a row; later update handlers will explicitly update that field. Indexes prepare common lookups by collection, saved request, and execution time. They help find rows without changing what the rows mean.
+
+`DatabaseSync` runs SQL synchronously. We are keeping the setup and later queries small in the main process. The renderer receives approved operations through preload, never the raw database connection or an arbitrary SQL function.
+
+### Persistence exercise
+
+Run `npm run db:demo` from the project folder. No demo API or desktop window is needed.
+
+The script creates a separate temporary database and inserts a collection, a saved request, and a fake HTTP 200 execution. It then closes and reopens the file. You should see:
+
+```text
+Closed the database. Reopening the same file...
+Read back: Student API → Get student → HTTP 200
+```
+
+In `scripts/database-demo.cjs`, statements use `?` placeholders and `.run(...)` arguments. Those **bound parameters** keep values separate from SQL text. `.get()` reads one result, and `.all()` reads a list of results. `JSON.stringify` stores a JavaScript snapshot as text; SQL's `json_extract` reads its status in the demonstration query.
+
+Try changing the example collection or request name and run the exercise again. Each run uses a fresh file and prints its path. It does not seed your actual workspace or make a real network request.
+
+Checkpoint questions: What is the difference between a primary key and a foreign key? Why does history keep separate snapshots? What happens when a saved request is deleted? Why do migration statements and the version update share one transaction? Why can the demo read a record after closing the connection?
+
+### Git checkpoint 6
+
+Verification passed: all 116 tests, the production build, the isolated database demonstration, and the Electron desktop check with an actual app restart. Database checks cover empty setup, persisted rows, foreign keys, deletion behavior, constraints, rollback of a failed migration, and preservation of newer-version or corrupt files.
+
+**Commit now.** Include all changes for this checkpoint, particularly the new database module, migration SQL, database demonstration, and database tests. Database data files belong outside Git; `.gitignore` excludes them.
+
+Message: `feat(storage): add versioned SQLite database foundation`
+
+The interface is unchanged in this checkpoint. No real requests or responses are stored yet. Next separate checkpoint: collection creation and listing through the main process, preload, and React interface.
