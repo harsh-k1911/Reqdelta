@@ -757,4 +757,68 @@ Verification passed: all 281 tests, the production build, and the complete deskt
 
 Message: `feat(compare): compare stored JSON responses in the desktop app`
 
-Next checkpoint: package and verify the macOS application, then rehearse the final demonstration and code walkthrough.
+The macOS packaging checkpoint is covered in Lesson 12 below.
+
+## Lesson 12: turn the project into a macOS application and DMG
+
+Your submission form requests a `.dmg`. This checkpoint adds a repeatable packaging command that creates the app, places it in a disk image, and checks that image. The final Apple silicon image is approximately 91.7 MB. The form's 50 MB limit is smaller than this build; you asked to receive the complete image regardless of size, so we have kept the complete Electron runtime.
+
+### Understand the three outputs
+
+`dist` contains the built React interface: HTML, JavaScript, and CSS. It cannot by itself launch our Electron main process, SQLite services, or preload bridge.
+
+`ReqDelta.app` is the actual desktop application. In Finder it appears as one application, but it is a bundle directory containing an executable, metadata, Electron's runtime/frameworks, our application files, and license notices. Electron includes Chromium for the interface and Node for main-process services; this is why the application is much larger than our source code.
+
+`ReqDelta-0.1.0-mac-arm64.dmg` is a compressed disk image used to deliver/install that app. Opening it mounts a volume. Dragging ReqDelta.app onto the Applications shortcut copies the application to `/Applications`; it does not run the app or modify its database. Eject the disk image after copying and launch the installed copy.
+
+The `.dmg` contains the `.app`; they are not interchangeable file extensions. Renaming a ZIP to `.dmg` would not create a disk image. We use macOS's own `hdiutil` to create and verify the real image.
+
+### Follow the build
+
+1. `npm run package:mac` first runs Vite's production build. React is bundled into `dist`; the desktop app no longer needs the Vite server.
+2. `scripts/package-mac.cjs` makes a new temporary staging directory. `stageApplication` copies the built interface, CommonJS Electron modules, SQL migrations, and a small package manifest. It excludes the checkout's `.git`, `.env`, tests, source React files, database, and development dependencies.
+3. The staged manifest still points to `electron/main.cjs`. React does not need to be copied as a runtime dependency because its code is already bundled into the built interface. Electron's services use built-in Node/Electron modules.
+4. `@electron/packager` combines that staged application with the pinned Electron runtime. Its `electronVersion` comes from our installed Electron package, and its download checksums come from that same package. Existing cached runtime downloads can be reused and verified.
+5. Packager sets the name, version, developer-tools category, and stable bundle identifier. `arm64` targets Apple silicon; `x64` targets Intel. This script builds for the current Mac's architecture. Only the Apple silicon build has been checked here.
+6. The runtime application files are stored in `Contents/Resources/app.asar`. Electron reads that archive transparently, including the migration SQL and compiled interface. ASAR is packaging, not encryption or protection against someone inspecting the shipped code.
+7. A local ad-hoc signature is applied and verified with `codesign`. This does not establish an Apple-verified publisher or notarize the app. It is suitable for our local demonstration build; public distribution is a separate task.
+8. `scripts/disk-image.cjs` copies the app with `ditto`, which preserves framework symlinks and file permissions, adds an Applications shortcut plus installation notes, and asks `hdiutil` for an HFS+ image using ULMO compression.
+9. The script verifies the image and writes a SHA-256 checksum beside it. A checksum detects whether the file changed; a checksum stored beside a file is not proof of its publisher's identity.
+10. Temporary build files are removed. Final outputs remain in `release`, which is ignored by Git. Rebuilding replaces the generated files for that version/architecture.
+
+The script is CommonJS. It uses `await import('@electron/packager')` because the packaging library exposes ES modules, just as our development script dynamically imports Vite. Your application source remains JavaScript.
+
+### Application files and user data have different homes
+
+The mounted DMG is read-only, and the installed application bundle should not receive database writes. SQLite continues to live under `app.getPath('userData')`, usually `~/Library/Application Support/ReqDelta/reqdelta.sqlite` on this Mac. The DMG contains a fresh application, not your personal saved requests or history.
+
+The main process now honours the `--user-data-dir` switch in packaged mode as well. Automated checks supply a new temporary directory so they cannot accidentally use your real workspace. A single-instance lock applies to that workspace; starting the same app/profile again focuses the existing window rather than opening another copy of its database.
+
+Encryption is still backed by macOS Keychain. A different build/signature can require permission again, so the provided `package-compat.cjs` checks development → packaged → development using made-up credentials in an isolated profile. It makes two local API calls during setup and then checks decryption/comparison offline. These native compatibility checks still need to run; they are not proven merely by a passing file/signature check.
+
+### What has been verified
+
+All 286 unit tests pass, including staging tests that deliberately put private/development files beside runtime files and verify they are excluded. The production interface and macOS app build succeeded.
+
+`npm run test:dmg` passed: SHA-256, disk-image integrity, read-only mount, Applications shortcut, expected visible contents, bundle identifier, code signature, ASAR presence, and license notices. The mounted volume was ejected afterward. Stronger compression reduced the image from about 120.6 MB to 91.7 MB, while preserving the complete runtime.
+
+The request to launch automated packaged-app GUI checks was declined during this checkpoint. Therefore the new `npm run test:packaged` workflow, encryption compatibility test, and single-instance behaviour have not been verified by running the packaged app yet. Previous desktop checks passed before packaging; that is useful evidence but does not substitute for checking the actual packaged executable.
+
+### Practise before submission
+
+1. Quit the development application with Command+Q. Open `release/ReqDelta-0.1.0-mac-arm64.dmg` in Finder.
+2. Drag ReqDelta.app to Applications, eject the image, and launch it from Applications.
+3. Explain why this app can open without `npm run dev` or a separate Node installation. The local demo API still requires `npm run demo` from the source checkout; this is a separate service.
+4. Allow Keychain access if macOS requests it. Create a collection and save a request, or confirm an existing request can be opened.
+5. Send the original student and `version=2`, quit/reopen the installed application, then select those stored responses and verify the same three changes.
+6. Locate the DMG for the college upload. Submit that file, not the `.app` directory, checksum file, or an older ZIP. The portal's upload-size restriction remains an external constraint; the delivered file is larger than 50 MB.
+
+Checkpoint questions: How does `dist` differ from the `.app`? What does a `.dmg` contain? Why does the installed app not need Vite? Why is the Electron package large? Why must SQLite stay outside the application bundle? What does ASAR do? How do a local signature, notarization, and a checksum differ? Which checks prove the files are intact, and which checks require launching the application?
+
+### Git checkpoint 12
+
+After the manual packaged-app check succeeds, **Commit now**. Include the manifest/lockfile, main-process profile/single-instance changes, packaging/disk-image/check/compatibility scripts, packaging tests, updated desktop checks, README, and this lesson. Keep the generated DMG, `.app`, checksums, and screenshots out of Git; the `.dmg` is uploaded separately to the college portal.
+
+Message: `build(mac): package ReqDelta as a macOS disk image`
+
+Next checkpoint: final demonstration, code walkthrough, and viva practice.

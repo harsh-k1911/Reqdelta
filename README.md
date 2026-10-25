@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: requests, collections, encrypted history, and desktop JSON comparison.** Save reusable configurations, execute requests, reopen stored responses, and compare two stored JSON bodies after an app restart. macOS packaging and the final project walkthrough remain before college delivery.
+**Current milestone: all five core workflows and a macOS DMG.** Save reusable configurations, execute requests, reopen stored responses, and compare two stored JSON bodies after an app restart. The Apple silicon package is built and its disk-image checks pass. A manual packaged-app walkthrough and final code review remain before submission.
 
 ## Run the application
 
@@ -74,7 +74,7 @@ On macOS, the main process serializes the entire configuration and encrypts it u
 
 There is no plaintext fallback. If secure storage is unavailable, saving fails and your draft remains available. If a saved payload cannot be decrypted, its record is kept and an error appears without replacing the current builder. Listing names does not decrypt the configurations. This feature currently supports macOS only.
 
-This is protection for local storage, not a portable export or a guarantee against a compromised running app. Copying the database to another Mac/account does not copy its Keychain key. Development and packaged builds can also differ in app identity; packaging verification will check this separately. Unsigned builds may prompt for Keychain access again when their identity changes. History uses the same protection for its complete request/outcome snapshots, including response headers and body.
+This is protection for local storage, not a portable export or a guarantee against a compromised running app. Copying the database to another Mac/account does not copy its Keychain key. Development and packaged builds can also differ in app identity. The package uses a local ad-hoc signature, and macOS can request Keychain access again when the build changes. Automated development/package compatibility checks are provided but have not run in this checkpoint; verify existing saved data when first opening the package. History uses the same protection for its complete request/outcome snapshots, including response headers and body.
 
 ## Execution history
 
@@ -150,7 +150,7 @@ Limits are 2 MiB of UTF-8 JSON text per response, 128 levels of nesting (root at
 - A tested recursive JSON comparison engine for added/removed fields, type/value changes, nested objects, and index-based arrays.
 - History selection and an offline desktop comparison report, with source labels, reversal, equal-body states, controlled errors, and expandable value previews.
 
-The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are persisted. All five core workflows are connected; macOS packaging and the final demonstration/review remain. Request/collection update and delete controls are outside the current interface.
+The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are persisted. All five core workflows are connected, and the macOS DMG is built; the final packaged-app demonstration/review remains. Request/collection update and delete controls are outside the current interface.
 
 ## SQLite storage foundation
 
@@ -215,9 +215,43 @@ The desktop test opens Electron using a temporary profile and checks the complet
 
 ## College delivery
 
-The college accepts a macOS desktop application and its source code. ReqDelta's local SQLite storage and request service do not require web hosting. We will package a macOS `.app` in a later checkpoint and verify the packaged version before submission; see [Electron's packaging documentation](https://www.electronjs.org/docs/latest/tutorial/application-distribution). The included demo API runs locally as a separate process. Remote APIs still require their normal network access.
+The college submission requires a **`.dmg` file** and source code. ReqDelta's local SQLite storage and request service do not require web hosting. Build on macOS using:
 
-Signing and notarizing for public macOS distribution are a separate release task, described in [Electron's code signing guide](https://www.electronjs.org/docs/latest/tutorial/code-signing). They are outside the current college delivery scope.
+```sh
+npm run package:mac
+```
+
+On this Apple silicon Mac, the output is:
+
+- `release/ReqDelta-0.1.0-mac-arm64.dmg` — the file to submit.
+- `release/ReqDelta-0.1.0-mac-arm64.dmg.sha256` — checksum for verifying that file.
+- `release/ReqDelta-darwin-arm64/ReqDelta.app` — the packaged application before it is placed in the disk image.
+
+The checked DMG is approximately **91.7 MB** (87.4 MiB). The portal's stated 50 MB limit is smaller than this build; the user requested the complete DMG at its actual size. This build is not represented as meeting that upload limit. Rebuilds can change the size and checksum.
+
+Double-click the DMG, drag **ReqDelta.app** onto **Applications**, eject the disk image, and open ReqDelta from Applications. Quit the development app with Command+Q first. Apple silicon/M-series Macs use this `arm64` build. The script targets the architecture of the Mac running it; an Intel Mac would produce an `x64` build, which has not been verified here.
+
+The `.app` includes Electron's Chromium/Node runtime. It does not need Vite, a separate Node installation, or a running development server. The included **demo API is still a separate process**, started from the source checkout with `npm run demo`; that demo command needs Node. Requests to remote APIs need their normal network access. Collections and stored-response inspection/comparison work offline.
+
+The build first compiles React, then stages only `dist`, Electron runtime modules/migrations, and a minimal package manifest. Electron Packager produces `ReqDelta.app` with the bundle identifier `com.harshk1911.reqdelta` and an `app.asar` runtime archive. ASAR groups files; it does not encrypt source code. Electron/Chromium and React license notices are included. See [Electron packaging](https://www.electronjs.org/docs/latest/tutorial/application-distribution) and [Packager options](https://electron.github.io/packager/main/interfaces/Options.html).
+
+macOS's `hdiutil` creates an HFS+ disk image using ULMO compression. It contains the application, an Applications shortcut, and installation notes. No local workspace database, `.git`, `.env`, tests, or development dependency tree is copied into the app. Rebuilding replaces generated artifacts for the same version/architecture. The current workspace database stays in the user's Application Support directory, separate from the read-only app bundle.
+
+```sh
+npm run test:dmg
+```
+
+This verifies the SHA-256 checksum, disk-image integrity, read-only mounting, expected visible files, Applications shortcut, bundle identifier, local code signature, runtime archive, and license notices. It ejects its temporary mount afterward and does not launch the app. These checks and all 286 unit tests passed for this checkpoint.
+
+```sh
+npm run test:packaged
+```
+
+This rebuilds the DMG, installs a temporary copy from it, runs the complete desktop checks in a temporary profile, and checks encrypted workspace compatibility in both directions between development and packaged apps. It also checks that a second instance exits instead of opening the same workspace twice. The GUI test launch was declined during this checkpoint, so **these packaged workflow/Keychain compatibility checks have not run yet**. Before submission, open the packaged app and verify saving/opening a request, sending to the demo API, restarting, and comparing two stored JSON responses.
+
+The app honours `--user-data-dir` in both modes for isolated checks. A single-instance lock uses that workspace, and a second launch focuses the existing window. Generated `dist`, `release`, test screenshots, and local database files remain ignored by Git. Commit the build scripts, tests, manifest/lockfile, application changes, and learning notes; upload the `.dmg` separately through the college form.
+
+The app uses an **ad-hoc signature** for the local college build. It is not Apple Developer ID signed or notarized. A downloaded copy may be blocked by Gatekeeper; review it through System Settings → Privacy & Security when appropriate. This is separate from a corrupt image or invalid code signature. Public signing/notarization remain outside this delivery scope; see [Electron code signing](https://www.electronjs.org/docs/latest/tutorial/code-signing).
 
 ## Code map
 
@@ -252,6 +286,10 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `scripts/demo-server.cjs` | Local API for learning and demonstrations |
 | `scripts/database-demo.cjs` | Isolated insert/close/reopen/read exercise using made-up records |
 | `scripts/compare-demo.cjs` | Standalone comparison example using made-up student JSON |
+| `scripts/package-mac.cjs` | Stages runtime files, packages/signs the macOS app, builds its DMG, and writes a checksum |
+| `scripts/disk-image.cjs` | Creates the compressed disk image and manages temporary read-only mounts |
+| `scripts/check-dmg.cjs` | Verifies disk-image contents, signature, identity, notices, and checksum without opening the app |
+| `scripts/package-compat.cjs` | Optional native check of encrypted workspace compatibility and single-instance handling |
 | `tests/request-service.test.mjs` | Request validation and response/error tests |
 | `tests/database.test.mjs` | Real SQLite persistence, relationships, constraints, migration rollback, and existing-data protection |
 | `tests/collections-service.test.mjs` | Collection validation, SQL parameter binding, ordering, Unicode limits, and storage failures |
@@ -261,6 +299,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `tests/history-service.test.mjs` | Independent snapshots, metadata paging, retention, rollback, unreadable data, and parent deletion |
 | `tests/json-diff.test.mjs` | Recursive changes, path escaping, missing/null distinctions, number handling, and comparison limits |
 | `tests/comparison-service.test.mjs` | ID validation, snapshot eligibility, direction, body-only equality, source summaries, and controlled errors |
+| `tests/packaging.test.mjs` | Runtime staging, exclusion of development/private files, missing-build rejection, and release paths |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

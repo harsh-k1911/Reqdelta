@@ -4,6 +4,11 @@ const path = require('node:path');
 const os = require('node:os');
 const { _electron: electron } = require('playwright-core');
 const { createDemoServer } = require('./demo-server.cjs');
+const { releasePaths } = require('./package-mac.cjs');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { withMountedImage } = require('./disk-image.cjs');
+const { checkDiskImage } = require('./check-dmg.cjs');
 
 async function pickHistory(page, id, side) {
   const panel = page.locator('.history-panel[aria-busy="false"]');
@@ -47,6 +52,7 @@ async function expectStudentComparison(page) {
 }
 
 async function run() {
+  const packaged = process.argv.includes('--packaged');
   const server = createDemoServer();
   let requestsReceived = 0;
   server.on('request', () => { requestsReceived += 1; });
@@ -60,18 +66,54 @@ async function run() {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.REQDELTA_DEV_URL;
   const launchOptions = {
-    executablePath: require('electron'),
-    args: ['.', `--user-data-dir=${userData}`],
+    executablePath: packaged ? releasePaths().executable : require('electron'),
+    args: packaged ? [`--user-data-dir=${userData}`] : ['.', `--user-data-dir=${userData}`],
     cwd: path.join(__dirname, '..'),
     env,
   };
   let desktop;
+  let unpacked;
   try {
+    if (packaged) {
+      await checkDiskImage();
+      unpacked = await fs.mkdtemp(path.join(os.tmpdir(), 'reqdelta-unpacked-'));
+      const runFile = promisify(execFile);
+      await withMountedImage(releasePaths().image, async (mount) => {
+        await runFile('/usr/bin/ditto', [path.join(mount, 'ReqDelta.app'), path.join(unpacked, 'ReqDelta.app')]);
+      });
+      const restoredApp = path.join(unpacked, 'ReqDelta.app');
+      await runFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', restoredApp]);
+      launchOptions.executablePath = path.join(restoredApp, 'Contents', 'MacOS', 'ReqDelta');
+      // A packaged build must ignore development-server configuration.
+      env.REQDELTA_DEV_URL = 'http://untrusted.invalid/';
+    }
     desktop = await electron.launch(launchOptions);
     const page = await desktop.firstWindow();
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
+    assert.equal(await desktop.evaluate(({ app }) => app.isPackaged), packaged);
+    if (packaged) {
+      assert.equal(await page.url(), 'reqdelta://app/index.html');
+      const contents = await desktop.evaluate(({ app }) => {
+        const fs = process.getBuiltinModule('node:fs');
+        const path = process.getBuiltinModule('node:path');
+        return {
+          appPath: app.getAppPath(),
+          files: fs.readdirSync(app.getAppPath()).sort(),
+          manifest: JSON.parse(fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8')),
+          migrations: fs.readdirSync(path.join(app.getAppPath(), 'electron', 'migrations')).sort(),
+          notices: fs.readdirSync(path.join(process.resourcesPath, 'THIRD_PARTY_NOTICES')).sort(),
+        };
+      });
+      assert.equal(contents.appPath.endsWith('/app.asar'), true);
+      assert.deepEqual(contents.files, ['dist', 'electron', 'package.json']);
+      assert.equal(contents.manifest.dependencies, undefined);
+      assert.equal(contents.manifest.devDependencies, undefined);
+      assert.equal(contents.manifest.scripts, undefined);
+      assert.equal(contents.migrations.length, 3);
+      assert.deepEqual(contents.notices, ['Chromium-LICENSES.html', 'Electron-LICENSE.txt', 'React-LICENSE.txt', 'ReactDOM-LICENSE.txt']);
+    }
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
     assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection', 'createSavedRequest', 'listSavedRequests', 'getSavedRequest', 'listHistory', 'getHistoryEntry', 'compareHistory']);
 
@@ -755,12 +797,13 @@ async function run() {
     });
     assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 2, history: requestsReceived, version: 3 });
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: offline JSON comparison after restart, reversal, selection across pages, equal responses, non-JSON errors, safe text rendering and expandable value previews; encrypted history, pagination, storage-write failure without HTTP retry, collections, saved requests, smaller-window layouts, and the complete HTTP workflow.');
+    console.log(`${packaged ? 'Packaged application' : 'Desktop'} checks passed: offline JSON comparison after restart, reversal, selection across pages, equal responses, non-JSON errors, safe text rendering and expandable value previews; encrypted history, pagination, storage-write failure without HTTP retry, collections, saved requests, smaller-window layouts, and the complete HTTP workflow.`);
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await fs.rm(userData, { recursive: true, force: true });
+    if (unpacked) await fs.rm(unpacked, { recursive: true, force: true });
   }
 }
 

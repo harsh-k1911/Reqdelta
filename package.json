@@ -6,7 +6,9 @@
   "private": true,
   "type": "commonjs",
   "main": "electron/main.cjs",
-  "engines": { "node": "^22.13.0 || >=24.0.0" },
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
   "scripts": {
     "dev": "node scripts/dev.cjs",
     "build": "vite build",
@@ -15,13 +17,17 @@
     "db:demo": "node scripts/database-demo.cjs",
     "compare:demo": "node scripts/compare-demo.cjs",
     "test": "vitest run",
-    "test:desktop": "npm run build && node scripts/smoke.cjs"
+    "test:desktop": "npm run build && node scripts/smoke.cjs",
+    "package:mac": "npm run build && node scripts/package-mac.cjs",
+    "test:dmg": "node scripts/check-dmg.cjs",
+    "test:packaged": "npm run package:mac && node scripts/smoke.cjs --packaged && node scripts/package-compat.cjs"
   },
   "dependencies": {
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@electron/packager": "20.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "electron": "45.0.0",
     "playwright-core": "1.64.1",

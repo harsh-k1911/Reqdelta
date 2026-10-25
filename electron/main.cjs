@@ -74,14 +74,23 @@ function createWindow() {
 }
 
 app.setName('ReqDelta');
+// Honour the normal Chromium profile switch in packaged builds too, so checks
+// can use a temporary workspace instead of touching the user's database.
+const profile = app.commandLine.getSwitchValue('user-data-dir');
+if (profile) app.setPath('userData', path.resolve(profile));
+const ownsWorkspace = app.requestSingleInstanceLock();
+if (!ownsWorkspace) app.quit();
+app.on('second-instance', () => {
+  if (mainWindow?.isMinimized()) mainWindow.restore();
+  mainWindow?.show();
+  mainWindow?.focus();
+});
 app.whenReady().then(() => {
+  if (!ownsWorkspace) return;
   if (DEV_URL && DEV_URL !== 'http://127.0.0.1:5173/') {
     throw new Error('Unexpected development server URL.');
   }
   try {
-    // Desktop checks launch with a separate profile, including its database.
-    const profile = !app.isPackaged && app.commandLine.getSwitchValue('user-data-dir');
-    if (profile) app.setPath('userData', path.resolve(profile));
     database = openDatabase(path.join(app.getPath('userData'), 'reqdelta.sqlite'));
   } catch (error) {
     dialog.showErrorBox('Could not open local workspace', `ReqDelta could not open its database.\n\n${error.message}`);
