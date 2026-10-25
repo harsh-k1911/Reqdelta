@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: requests, collections, encrypted history, and the JSON comparison engine.** Save reusable configurations, execute requests, and reopen stored responses after an app restart. The comparison engine works through its tests and terminal demo; selecting responses for comparison in the desktop interface is the next checkpoint. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: requests, collections, encrypted history, and desktop JSON comparison.** Save reusable configurations, execute requests, reopen stored responses, and compare two stored JSON bodies after an app restart. macOS packaging and the final project walkthrough remain before college delivery.
 
 ## Run the application
 
@@ -90,7 +90,21 @@ History automatically retains the newest **100 entries** within **50 MiB of encr
 
 If history encryption or writing fails, the HTTP result still appears with a separate **History was not saved** warning. The app does not automatically repeat the HTTP request. Opening a missing or unreadable snapshot shows an error without replacing it. Duration measures the HTTP attempt, excluding the later encryption/database work. History is committed before a normal Send action finishes; quitting during an in-flight request can prevent its completion from being recorded.
 
-## JSON comparison engine
+## Compare stored JSON responses
+
+Send `GET http://127.0.0.1:3030/students/101` once. Add the query parameter `version` with value `2` and send again. In **History**, use the first execution's **Before** radio button and the second execution's **After** button, then choose **Compare responses**.
+
+The comparison page shows both source IDs, methods, status codes, timestamps, counts, and a table of changes. The student example produces three: `/age` changes from number `20` to string `"20"`, `/fullName` is added, and `/name` is removed. Missing means a field did not exist on that side; it is different from JSON `null`. **Reverse comparison** swaps the sources and calculates the report again. **Change selection** returns to History; **Swap selection** and **Clear selection** change its chosen pair.
+
+Selections remain while paging through History or moving between views, so the two executions can come from different pages. The **Compare** sidebar button reopens the current report. Selections and reports are held in memory, not stored as extra history records; after quitting, choose the pair again. The underlying encrypted snapshots remain available within the history retention limits.
+
+Comparison reads and decrypts saved snapshots without contacting either API or sending the current builder draft. You can stop the demo API, quit/reopen ReqDelta, and compare those two executions again. No history entry is created by comparing. A snapshot removed by retention or one that cannot be decrypted produces an error instead of a partial result.
+
+Only JSON response bodies are compared. Network failures have no selectable response. Plain-text responses can be selected from the metadata list, but comparison reports which side is not JSON. A JSON HTTP 404 or 500 is eligible: status codes, headers, URLs, and timing are displayed where relevant but are not part of the body diff. Equal parsed bodies show **No JSON value differences**.
+
+Values render as text, including strings that resemble HTML. Values longer than 600 serialized characters initially show a labeled preview; **Show full value** expands the complete value. The root path is displayed as **(root)**. Arrays use indexes, and the engine limits below apply to every desktop comparison. Observed differences do not automatically mean an API change breaks its clients.
+
+### JSON comparison engine
 
 Run the standalone learning example:
 
@@ -134,8 +148,9 @@ Limits are 2 MiB of UTF-8 JSON text per response, 128 levels of nesting (root at
 - Offline snapshot inspection after restarting, including stored body, response headers, and request inputs.
 - Separate storage warnings that preserve the HTTP result and never trigger an automatic retry.
 - A tested recursive JSON comparison engine for added/removed fields, type/value changes, nested objects, and index-based arrays.
+- History selection and an offline desktop comparison report, with source labels, reversal, equal-body states, controlled errors, and expandable value previews.
 
-The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are now persisted. Connecting the comparison engine to stored-response selection in History is the next checkpoint.
+The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are persisted. All five core workflows are connected; macOS packaging and the final demonstration/review remain. Request/collection update and delete controls are outside the current interface.
 
 ## SQLite storage foundation
 
@@ -153,7 +168,7 @@ Version 1 had no request-saving interface. The second migration replaces its emp
 
 Versions 1 and 2 did not record real history. The third migration replaces that empty history table with its encrypted layout. It similarly refuses an upgrade containing manually seeded older history, preserving that file for manual conversion instead of deleting it.
 
-The database connection and encryption operations stay in the main process. The eight preload functions are `sendRequest`, `listCollections`, `createCollection`, `createSavedRequest`, `listSavedRequests`, `getSavedRequest`, `listHistory`, and `getHistoryEntry`. Each handler checks the sender. History writes happen only inside the main-process request runner. The renderer has no direct database, arbitrary SQL, general-purpose encryption, or history-insert access. Inserts and lookups bind values separately from SQL text.
+The database connection and encryption operations stay in the main process. The nine preload functions are `sendRequest`, `listCollections`, `createCollection`, `createSavedRequest`, `listSavedRequests`, `getSavedRequest`, `listHistory`, `getHistoryEntry`, and `compareHistory`. Each handler checks the sender. Comparison accepts two history IDs, reads their verified snapshots, and calls the pure comparison engine. History writes happen only inside the main-process request runner. The renderer has no direct database, arbitrary SQL, general-purpose encryption, or history-insert access. Inserts and lookups bind values separately from SQL text.
 
 Run the learning exercise:
 
@@ -170,7 +185,7 @@ Local `.sqlite`/`.db` files and their journal files are excluded by `.gitignore`
 | URL | Purpose |
 | --- | --- |
 | `http://127.0.0.1:3030/students/101` | Original student JSON |
-| `http://127.0.0.1:3030/students/101?version=2` | Renamed field and changed type, ready for the later comparison feature |
+| `http://127.0.0.1:3030/students/101?version=2` | Renamed field and changed type for the comparison demonstration |
 | `http://127.0.0.1:3030/text` | Non-JSON response |
 | `http://127.0.0.1:3030/status/404` | An HTTP error response with a body |
 | `http://127.0.0.1:3030/slow` | Takes 20 seconds, so the client times out first |
@@ -196,7 +211,7 @@ npm start
 npm run test:desktop
 ```
 
-The desktop test opens Electron using a temporary profile and checks the complete HTTP workflow, collections, saved configurations, and history. It verifies real macOS encryption, absence of made-up credentials from database bytes, pagination, and smaller-window layouts. It stops the API, opens snapshots without network calls, then quits/reopens the app and checks both saved requests and historical responses. A simulated database write failure confirms that the HTTP response survives without an automatic retry. Screenshots are saved under `test-results/`. No external API or real API credentials are needed. The first native encryption operation may request Keychain access.
+The desktop test opens Electron using a temporary profile and checks the complete HTTP workflow, collections, saved configurations, history, and JSON comparison. It verifies real macOS encryption, absence of made-up credentials from database bytes, pagination, and smaller-window layouts. It stops the API, opens and compares snapshots without network calls, then quits/reopens the app and checks persistence and comparison again. Comparison checks include reversal, selection across pages, identical bodies, plain-text rejection, text-safe rendering, and value expansion. A simulated database write failure confirms that the HTTP response survives without an automatic retry. Screenshots are saved under `test-results/`. No external API or real API credentials are needed. The first native encryption operation may request Keychain access.
 
 ## College delivery
 
@@ -209,7 +224,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | File | Responsibility |
 | --- | --- |
 | `electron/main.cjs` | Desktop window, local interface loading, SQLite lifecycle, trusted IPC handlers |
-| `electron/preload.cjs` | Exposes eight approved request, collection, and history operations on `window.reqdelta` |
+| `electron/preload.cjs` | Exposes nine approved request, collection, history, and comparison operations on `window.reqdelta` |
 | `electron/request-service.cjs` | Validates requests, fetches responses, limits size/time, returns results |
 | `electron/request-config.cjs` | Copies and bounds supported configuration fields for saving and execution |
 | `electron/request-runner.cjs` | Executes once, records history, and keeps storage warnings separate from the result |
@@ -217,6 +232,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `electron/saved-requests-service.cjs` | Validates, saves, lists, and restores request configurations without executing them |
 | `electron/history-service.cjs` | Encrypts execution snapshots, reads history, pages metadata, and prunes old entries transactionally |
 | `electron/json-diff.cjs` | Pure, bounded comparison of two JSON response texts with typed changes and paths |
+| `electron/comparison-service.cjs` | Validates two history IDs, reads/decrypts snapshots, checks JSON eligibility, and returns a diff with source labels |
 | `electron/secure-storage.cjs` | Serializes configurations and delegates encryption/decryption to macOS through Electron |
 | `electron/database.cjs` | Opens SQLite, applies pending migrations transactionally, and checks the schema version |
 | `electron/migrations/001-initial.sql` | Tables, relationships, constraints, and indexes for schema version 1 |
@@ -228,7 +244,8 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `src/components/JsonBodyEditor.jsx` | None/JSON body selection, draft editing, and sample insertion |
 | `src/components/CollectionsPanel.jsx` | Creates collections, expands their saved requests, and opens a chosen request |
 | `src/components/SaveRequestForm.jsx` | Collection selection, request naming, save/cancel actions, and save errors |
-| `src/components/HistoryPanel.jsx` | Paginated execution list, outcome summaries, and snapshot opening |
+| `src/components/HistoryPanel.jsx` | Paginated execution list, snapshot opening, and Before/After comparison selection |
+| `src/components/ComparisonPanel.jsx` | Comparison sources, counts, typed changes, expandable values, and empty/error states |
 | `src/components/Icon.jsx` | Small inline interface icons |
 | `src/styles.css` | Interface layout and appearance |
 | `scripts/dev.cjs` | Starts Vite and Electron together |
@@ -243,6 +260,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `tests/request-runner.test.mjs` | Validation before execution, one HTTP attempt, failure outcomes, and separate history warnings |
 | `tests/history-service.test.mjs` | Independent snapshots, metadata paging, retention, rollback, unreadable data, and parent deletion |
 | `tests/json-diff.test.mjs` | Recursive changes, path escaping, missing/null distinctions, number handling, and comparison limits |
+| `tests/comparison-service.test.mjs` | ID validation, snapshot eligibility, direction, body-only equality, source summaries, and controlled errors |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

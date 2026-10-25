@@ -1,5 +1,6 @@
 export default function Icon({ name, size = 18, ...props }) {
   const paths = {
+    compare: <><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" /></>,
     history: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
     arrow: <><path d="M4 12h15M13 5l7 7-7 7" /></>,

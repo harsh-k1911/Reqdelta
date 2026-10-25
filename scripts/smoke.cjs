@@ -5,6 +5,47 @@ const os = require('node:os');
 const { _electron: electron } = require('playwright-core');
 const { createDemoServer } = require('./demo-server.cjs');
 
+async function pickHistory(page, id, side) {
+  const panel = page.locator('.history-panel[aria-busy="false"]');
+  await panel.waitFor();
+  const newest = page.getByRole('button', { name: 'Newest executions', exact: true });
+  if (await newest.isEnabled()) {
+    await newest.click();
+    await panel.waitFor();
+  }
+  for (let index = 0; index < 6; index += 1) {
+    const choice = page.getByRole('radio', { name: `Use history entry ${id} as ${side}`, exact: true });
+    if (await choice.count()) {
+      await choice.check();
+      return;
+    }
+    const older = page.getByRole('button', { name: 'Older executions', exact: true });
+    assert.equal(await older.isEnabled(), true, `History entry ${id} must be available`);
+    await older.click();
+    await panel.waitFor();
+  }
+  throw new Error(`Could not find history entry ${id}`);
+}
+
+async function expectStudentComparison(page) {
+  await page.getByRole('heading', { name: 'Response comparison', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '3 changes', exact: true }).waitFor();
+  const table = page.getByRole('table', { name: 'JSON body changes', exact: true });
+  const age = table.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/age', exact: true }) });
+  assert.equal(await age.locator('td').nth(1).locator('pre').innerText(), '20');
+  assert.equal(await age.locator('td').nth(2).locator('pre').innerText(), '"20"');
+  await age.getByText('Type changed', { exact: true }).waitFor();
+  await age.getByText('number', { exact: true }).waitFor();
+  await age.getByText('string', { exact: true }).waitFor();
+  const added = table.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/fullName', exact: true }) });
+  await added.getByText('Added', { exact: true }).waitFor();
+  await added.locator('td').nth(1).getByText('Missing', { exact: true }).waitFor();
+  const removed = table.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/name', exact: true }) });
+  await removed.getByText('Removed', { exact: true }).waitFor();
+  await removed.locator('td').nth(2).getByText('Missing', { exact: true }).waitFor();
+  return table;
+}
+
 async function run() {
   const server = createDemoServer();
   let requestsReceived = 0;
@@ -32,7 +73,7 @@ async function run() {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.getByRole('heading', { name: 'A closer look at your API.' }).waitFor();
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
-    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection', 'createSavedRequest', 'listSavedRequests', 'getSavedRequest', 'listHistory', 'getHistoryEntry']);
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.reqdelta)), ['sendRequest', 'listCollections', 'createCollection', 'createSavedRequest', 'listSavedRequests', 'getSavedRequest', 'listHistory', 'getHistoryEntry', 'compareHistory']);
 
     const storage = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
@@ -54,6 +95,10 @@ async function run() {
     const historyNav = page.getByRole('button', { name: 'History', exact: true });
     await historyNav.click();
     await page.getByText('No executions yet. Send a request to start your history.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Compare responses', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    await page.getByText('Choose two executions in History, then compare their JSON responses.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Reverse comparison', exact: true }).isDisabled(), true);
     await page.getByRole('button', { name: 'Request builder', exact: true }).click();
 
     await page.getByText('No collections yet. Use + to create your first group.', { exact: true }).waitFor();
@@ -125,6 +170,7 @@ async function run() {
     await send.click();
     await page.getByText('200 OK', { exact: true }).waitFor();
     assert.match(await page.locator('#response-body').innerText(), /"name": "Rahul"/);
+    const initialStudentHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
     await responseDetails.getByRole('tab', { name: /Headers/ }).click();
     await page.getByRole('cell', { name: 'content-type', exact: true }).waitFor();
     await responseDetails.getByRole('tab', { name: 'Body', exact: true }).click();
@@ -365,6 +411,7 @@ async function run() {
     await url.fill(`${origin}/text`);
     await send.click();
     await page.getByText('Hello from the ReqDelta demo API. Text responses work too.', { exact: true }).waitFor();
+    const textHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
 
     await url.fill(`${origin}/status/404`);
     await send.click();
@@ -465,11 +512,12 @@ async function run() {
     savedEcho = JSON.parse(await page.locator('#response-body').innerText());
     assert.equal(savedEcho.rawBody, savedBody);
     assert.equal(savedEcho.queryParams.filter((item) => item.key === 'tag').length, 1);
-    const editedBody = savedBody.replace('Harsh 😀', 'Changed draft');
+    const editedBody = JSON.stringify({ ...JSON.parse(savedBody), student: '<b>Changed draft</b>', note: 'x'.repeat(700) }, null, 2);
     await bodyInput.fill(editedBody);
     await send.click();
     await page.getByText('200 OK', { exact: true }).waitFor();
     assert.equal(JSON.parse(await page.locator('#response-body').innerText()).rawBody, editedBody);
+    const editedEchoHistoryId = (await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id;
     const oldEcho = await page.evaluate((id) => window.reqdelta.getHistoryEntry({ id }), firstEchoHistoryId);
     assert.equal(JSON.parse(oldEcho.entry.outcome.response.body).rawBody, savedBody);
 
@@ -588,6 +636,72 @@ async function run() {
     await page.getByText('No HTTP response available', { exact: true }).waitFor();
     assert.equal(requestsReceived, beforeInspection);
 
+    // Compare persisted snapshots while the API is stopped. Selections use IDs,
+    // including entries on different pages; comparing never appends history.
+    await historyNav.click();
+    await page.getByRole('radio', { name: `Use history entry ${failedHistoryId} as before`, exact: true }).waitFor();
+    assert.equal(await page.getByRole('radio', { name: `Use history entry ${failedHistoryId} as before`, exact: true }).isDisabled(), true);
+    await pickHistory(page, originalStudentHistoryId, 'before');
+    assert.equal(await page.getByRole('radio', { name: `Use history entry ${originalStudentHistoryId} as after`, exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Compare responses', exact: true }).isDisabled(), true);
+    await pickHistory(page, changedStudentHistoryId, 'after');
+    await page.getByRole('button', { name: 'Compare responses', exact: true }).click();
+    await expectStudentComparison(page);
+    assert.equal(requestsReceived, beforeInspection);
+    await page.screenshot({ path: 'test-results/desktop-comparison.png' });
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 680));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: 'test-results/desktop-comparison-small.png' });
+    await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    await page.getByRole('button', { name: 'Reverse comparison', exact: true }).click();
+    const reversed = page.getByRole('table', { name: 'JSON body changes', exact: true });
+    await reversed.waitFor();
+    const reversedAge = reversed.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/age', exact: true }) });
+    assert.equal(await reversedAge.locator('td').nth(1).locator('pre').innerText(), '"20"');
+    assert.equal(await reversedAge.locator('td').nth(2).locator('pre').innerText(), '20');
+    await reversed.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/name', exact: true }) }).getByText('Added', { exact: true }).waitFor();
+
+    await page.getByRole('button', { name: 'Change selection', exact: true }).click();
+    await page.getByRole('button', { name: 'Swap selection', exact: true }).click();
+    await page.getByRole('button', { name: 'Compare responses', exact: true }).click();
+    await expectStudentComparison(page);
+    await page.getByRole('button', { name: 'Change selection', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+    await pickHistory(page, originalStudentHistoryId, 'before');
+    await pickHistory(page, initialStudentHistoryId, 'after');
+    assert.equal(await page.getByLabel('Comparison selection', { exact: true }).innerText().then((text) => text.includes(`#${originalStudentHistoryId}`)), true);
+    await page.getByRole('button', { name: 'Compare responses', exact: true }).click();
+    await page.getByRole('heading', { name: 'No JSON value differences', exact: true }).waitFor();
+    assert.equal(await page.getByRole('table', { name: 'JSON body changes', exact: true }).count(), 0);
+
+    await page.getByRole('button', { name: 'Change selection', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+    await pickHistory(page, originalStudentHistoryId, 'before');
+    await pickHistory(page, textHistoryId, 'after');
+    await page.getByRole('button', { name: 'Compare responses', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'After response is not JSON' }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: 'No JSON value differences', exact: true }).count(), 0);
+    await page.screenshot({ path: 'test-results/desktop-comparison-error.png' });
+
+    await page.getByRole('button', { name: 'Change selection', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+    await pickHistory(page, firstEchoHistoryId, 'before');
+    await pickHistory(page, editedEchoHistoryId, 'after');
+    await page.getByRole('button', { name: 'Compare responses', exact: true }).click();
+    const echoChanges = page.getByRole('table', { name: 'JSON body changes', exact: true });
+    await echoChanges.waitFor();
+    const changedName = echoChanges.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/body/student', exact: true }) });
+    assert.equal(await changedName.locator('td').nth(2).locator('pre').innerText(), '"<b>Changed draft</b>"');
+    assert.equal(await page.locator('.comparison-panel b').count(), 0);
+    const note = echoChanges.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '/body/note', exact: true }) }).locator('td').nth(2);
+    await note.getByText('Preview truncated', { exact: true }).waitFor();
+    await note.getByRole('button', { name: 'Show full value', exact: true }).click();
+    assert.equal(await note.locator('pre').innerText(), JSON.stringify('x'.repeat(700)));
+    await note.getByRole('button', { name: 'Show preview', exact: true }).click();
+    assert.equal((await note.locator('pre').innerText()).length, 601);
+    assert.equal(requestsReceived, beforeInspection);
+    assert.equal((await page.evaluate(() => window.reqdelta.listHistory())).entries[0].id, failedHistoryId);
+
     assert.deepEqual(errors, []);
 
     await desktop.close();
@@ -618,6 +732,13 @@ async function run() {
     assert.equal(originalStudent.name, 'Rahul');
     assert.equal(originalStudent.age, 20);
     assert.equal(requestsReceived, beforeInspection);
+    await reopenedPage.getByRole('button', { name: 'History', exact: true }).click();
+    await pickHistory(reopenedPage, originalStudentHistoryId, 'before');
+    await pickHistory(reopenedPage, changedStudentHistoryId, 'after');
+    await reopenedPage.getByRole('button', { name: 'Compare responses', exact: true }).click();
+    await expectStudentComparison(reopenedPage);
+    assert.equal(requestsReceived, beforeInspection);
+    await reopenedPage.screenshot({ path: 'test-results/desktop-comparison-reopened.png' });
     const persisted = await desktop.evaluate(({ app }) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
       const path = process.getBuiltinModule('node:path');
@@ -634,7 +755,7 @@ async function run() {
     });
     assert.deepEqual(persisted, { names: collectionNames, count: 4, savedRequests: 2, history: requestsReceived, version: 3 });
     assert.deepEqual(errors, []);
-    console.log('Desktop checks passed: encrypted history for responses and failures, immutable snapshots, offline inspection after restart, history pagination, storage-write failure without HTTP retry, collections and saved requests, smaller-window layout, and the complete HTTP workflow.');
+    console.log('Desktop checks passed: offline JSON comparison after restart, reversal, selection across pages, equal responses, non-JSON errors, safe text rendering and expandable value previews; encrypted history, pagination, storage-write failure without HTTP retry, collections, saved requests, smaller-window layouts, and the complete HTTP workflow.');
   } finally {
     if (desktop) await desktop.close();
     server.closeAllConnections();

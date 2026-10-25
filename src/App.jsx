@@ -6,6 +6,7 @@ import JsonBodyEditor from './components/JsonBodyEditor.jsx';
 import CollectionsPanel from './components/CollectionsPanel.jsx';
 import SaveRequestForm from './components/SaveRequestForm.jsx';
 import HistoryPanel from './components/HistoryPanel.jsx';
+import ComparisonPanel from './components/ComparisonPanel.jsx';
 
 const DEMO_ORIGIN = 'http://127.0.0.1:3030';
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
@@ -37,7 +38,36 @@ export default function App() {
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [activeHistory, setActiveHistory] = useState(null);
   const [historyWarning, setHistoryWarning] = useState('');
-  const busy = loading || savingRequest || openingRequest;
+  const [comparisonPair, setComparisonPair] = useState({ before: null, after: null });
+  const [comparison, setComparison] = useState(null);
+  const [comparisonError, setComparisonError] = useState('');
+  const [comparing, setComparing] = useState(false);
+  const busy = loading || savingRequest || openingRequest || comparing;
+
+  function changeComparisonPair(pair) {
+    setComparisonPair(pair);
+    setComparison(null);
+    setComparisonError('');
+  }
+
+  async function handleCompare(pair = comparisonPair) {
+    if (busy || !pair.before || !pair.after) return;
+    setComparing(true);
+    setComparisonPair(pair);
+    setComparison(null);
+    setComparisonError('');
+    setView('compare');
+    try {
+      if (!window.reqdelta) throw new Error('Open the desktop app to compare stored responses.');
+      const result = await window.reqdelta.compareHistory({ beforeId: pair.before.id, afterId: pair.after.id });
+      if (!result.ok) throw new Error(result.error.message);
+      setComparison(result.comparison);
+    } catch (error) {
+      setComparisonError(error.message || 'Could not compare these snapshots. Try again.');
+    } finally {
+      setComparing(false);
+    }
+  }
 
   async function handleSend(event) {
     event.preventDefault();
@@ -164,14 +194,15 @@ export default function App() {
         <p className="workspace-label">YOUR WORKSPACE</p>
         <button type="button" className={`sidebar-nav-item ${view === 'builder' ? 'sidebar-active' : ''}`} aria-current={view === 'builder' ? 'page' : undefined} disabled={busy} onClick={() => { setView('builder'); setWorkspaceError(''); }}><Icon name="request" /><span>Request builder</span>{view === 'builder' && <span className="active-indicator" />}</button>
         <button type="button" className={`sidebar-nav-item ${view === 'history' ? 'sidebar-active' : ''}`} aria-current={view === 'history' ? 'page' : undefined} disabled={busy} onClick={() => { setView('history'); setWorkspaceError(''); }}><Icon name="history" /><span>History</span>{view === 'history' && <span className="active-indicator" />}</button>
+        <button type="button" className={`sidebar-nav-item ${view === 'compare' ? 'sidebar-active' : ''}`} aria-current={view === 'compare' ? 'page' : undefined} disabled={busy} onClick={() => setView('compare')}><Icon name="compare" /><span>Compare</span>{view === 'compare' && <span className="active-indicator" />}</button>
         <CollectionsPanel onOpenRequest={handleOpenRequest} selectedRequest={selectedRequest} refreshKey={savedRefresh} disabled={busy} />
         <div className="sidebar-bottom"><span className="local-dot" /><span>Local workspace</span><span className="version">v0.1</span></div>
       </aside>
 
       <main className="workspace">
-        <header className="titlebar"><div className="breadcrumb">Workspace <Icon name="chevron" size={12} /><span>{view === 'history' ? 'History' : 'Request builder'}</span></div><span className="desktop-badge"><span /> DESKTOP EDITION</span></header>
+        <header className="titlebar"><div className="breadcrumb">Workspace <Icon name="chevron" size={12} /><span>{{ builder: 'Request builder', history: 'History', compare: 'Compare' }[view]}</span></div><span className="desktop-badge"><span /> DESKTOP EDITION</span></header>
         <div className="workspace-content">
-          {view === 'history' ? <HistoryPanel refreshKey={historyRefresh} onOpen={handleOpenHistory} disabled={busy} openError={workspaceError} /> : <>
+          {view === 'history' ? <HistoryPanel refreshKey={historyRefresh} onOpen={handleOpenHistory} disabled={busy} openError={workspaceError} pair={comparisonPair} onPick={(side, entry) => changeComparisonPair({ ...comparisonPair, [side]: entry })} onClear={() => changeComparisonPair({ before: null, after: null })} onSwap={() => changeComparisonPair({ before: comparisonPair.after, after: comparisonPair.before })} onCompare={() => handleCompare()} /> : view === 'compare' ? <ComparisonPanel pair={comparisonPair} report={comparison} loading={comparing} error={comparisonError} onChoose={() => { setView('history'); setWorkspaceError(''); }} onCompare={() => handleCompare()} onReverse={() => handleCompare({ before: comparisonPair.after, after: comparisonPair.before })} /> : <>
           <div className="page-heading"><div><p className="eyebrow">THE DETAILS MAKE THE DIFFERENCE</p><h1>A closer look at your API.</h1><p className="page-description">Send a request. Inspect the response. Understand what comes back.</p></div><span className="milestone-badge">01 <span>/ FOUNDATION</span></span></div>
 
           <section className="request-panel" aria-labelledby="request-heading">

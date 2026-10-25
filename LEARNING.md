@@ -694,4 +694,67 @@ Verification passed: all 257 tests, the production build, and the standalone com
 
 Message: `feat(compare): add recursive JSON response diff engine`
 
-Next checkpoint: select two History entries, compare their stored JSON response bodies, and display the change report in the desktop app.
+The desktop integration is covered in Lesson 11 below.
+
+## Lesson 11: compare stored responses in the desktop app
+
+This step connects our tested algorithm to the existing history service. It adds a main-process comparison service, one narrow preload function, two History selection controls, and a comparison view. There is no schema migration: both response bodies already exist inside encrypted history snapshots.
+
+### Follow a comparison click
+
+1. In `HistoryPanel.jsx`, the Before/After radio buttons call `onPick(side, entry)`. A radio group allows one selection per side. Choosing the same execution for both sides is disabled.
+2. `App.jsx` stores the two metadata entries in `comparisonPair`. It owns this state above the History panel, so changing pages or views does not discard the chosen IDs. Metadata is enough for selection; the list does not decrypt every response body.
+3. **Compare responses** calls `handleCompare`, sets the waiting state, clears any previous report/error, and changes the visible view to Compare.
+4. `window.reqdelta.compareHistory({ beforeId, afterId })` invokes the specific `history:compare` IPC channel. The main handler checks the sender and delegates to `comparison-service.cjs`. The renderer cannot supply arbitrary SQL or choose an IPC channel.
+5. The service validates two distinct positive safe-integer IDs. UI restrictions are helpful, but the main process must validate independently.
+6. For each ID, `history.get` loads, decrypts, and validates the stored snapshot. The service checks that a real HTTP response exists and its body format is JSON. It calls `compareJsonBodies(before.body, after.body)` with those stored body strings.
+7. The result contains `{ before, after, equal, counts, changes }`. Before/After here are small source summaries: IDs, names, methods, status codes, and timestamps. The response does not duplicate the entire decrypted request configuration.
+8. `ComparisonPanel.jsx` renders the summaries, counts, and typed change table. `finally` releases the waiting state even if reading or comparing failed.
+
+The flow is `History selection → preload → trusted main handler → history.get → JSON diff → React report`. There is no call to `executeRequest`, `sendRequest`, or `history.append`. Comparing does not create another execution. History reads may refresh ciphertext when the encryption provider requests key rotation; this does not alter snapshot content.
+
+### State versus saved data
+
+The builder draft, selected comparison pair, and displayed report are separate React state. Editing a draft cannot silently change a historical comparison. Choosing a new pair clears the previous report, so an error cannot leave an old successful result labeled as the new pair.
+
+IDs identify executions across pages. Row positions do not: position 1 on page 2 identifies a different entry from position 1 on page 1. This is why `comparisonPair.before.id` is stored rather than an array index.
+
+Changing views preserves the pair and report for this app session. Quitting discards this temporary UI state. It does not delete the underlying snapshots, so after reopening you can select them again. A selected snapshot can eventually be removed by retention; the service handles a missing ID with an error.
+
+### Direction and eligibility
+
+**Swap selection** exchanges the two chosen entries in History. **Reverse comparison** exchanges them and runs the comparison again. Before → After is directional: an added field becomes removed in reverse, and a type change from number to string becomes string to number.
+
+A network error has no HTTP body, so its radio buttons are disabled. The history list contains metadata, not decrypted body formats; plain text can therefore be selected and is rejected with a Before/After message when compared. A 404 JSON response is eligible. Status codes, headers, URLs, and timing do not contribute to the JSON change count.
+
+Equal means the parsed JSON values match under our algorithm's rules. It does not mean the complete HTTP exchanges are identical. Whitespace and object key order are ignored, and arrays still use matching indexes. The engine's number and resource limits from Lesson 10 remain in force. An over-limit comparison returns an error, never an incomplete report presented as complete.
+
+### Read `DiffValue` in the comparison panel
+
+`Object.hasOwn(change, side)` distinguishes a missing field from an existing `null`, `false`, zero, or empty string. If present, `JSON.stringify` displays the actual value as JSON: number `20` has no quotes; string `"20"` has quotes. Type badges make that distinction explicit.
+
+React renders the serialized value inside a `<pre>` as text. An API value such as `"<b>hello</b>"` remains visible text instead of becoming a bold HTML element. We do not use `dangerouslySetInnerHTML`.
+
+`DiffValue` has its own `expanded` state. Values longer than 600 serialized characters start with a labeled preview and a **Show full value** button. The full value remains available; the preview does not change the comparison or its count. The path stays a JSON Pointer, except the empty root path is displayed as `(root)` for readability.
+
+### Practise the full feature
+
+1. Restart `npm run dev` because this step changed Electron's main process and preload. Keep `npm run demo` running for the next two sends.
+2. Select Student JSON, send the original student, then add the `version=2` query row and send again.
+3. Open History. Choose the original execution as Before and version 2 as After. Click Compare responses.
+4. Explain all three changes: `/age` is a number-to-string type change, `/fullName` is added, and `/name` is removed. Missing is not null. The engine has not inferred a rename or a breaking-change verdict.
+5. Reverse comparison. Predict how the before/after values and added/removed labels should change, then verify them.
+6. Change selection and compare two separate executions of the original student. Expect No JSON value differences. Try one plain-text execution to see the controlled error; then choose JSON again to recover.
+7. Stop the demo API. Quit ReqDelta with Command+Q, reopen it, and select the two stored student executions again. The same three changes should appear without the API running.
+
+Checkpoint questions: Why does selection live in App rather than inside a page of History? Why send IDs instead of the current builder draft? Why validate IDs in the main process as well as disabling buttons? Why can two HTTP responses with different status codes have equal JSON bodies? What becomes added when you reverse a removal? Why does comparing create no history entry? Which data survives quitting?
+
+### Git checkpoint 11
+
+Verification passed: all 281 tests, the production build, and the complete desktop check. The new service tests cover invalid/repeated IDs, missing/unreadable snapshots, unavailable secure storage, body-only equality, JSON eligibility, directional changes, minimal source metadata, and engine errors without partial reports. Desktop checks cover the three student changes with the API stopped, reversal, pair selection across pages, equal bodies, plain-text rejection and recovery, literal HTML-looking values, expandable previews, smaller windows, and comparison after quitting/reopening. Existing requests, collections, encryption, saved configurations, and history checks still pass.
+
+**Commit now** after trying the student comparison. Include `electron/comparison-service.cjs`, `src/components/ComparisonPanel.jsx`, `tests/comparison-service.test.mjs`, main/preload integration, App/History/icons/styles, the desktop check, README, and this lesson. Generated screenshots and build output remain ignored.
+
+Message: `feat(compare): compare stored JSON responses in the desktop app`
+
+Next checkpoint: package and verify the macOS application, then rehearse the final demonstration and code walkthrough.

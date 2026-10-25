@@ -8,6 +8,7 @@ const { createSecureStorage } = require('./secure-storage.cjs');
 const { createSavedRequestsService } = require('./saved-requests-service.cjs');
 const { createHistoryService } = require('./history-service.cjs');
 const { createRequestRunner } = require('./request-runner.cjs');
+const { createComparisonService } = require('./comparison-service.cjs');
 
 const APP_URL = 'reqdelta://app/index.html';
 const DEV_URL = !app.isPackaged && process.env.REQDELTA_DEV_URL;
@@ -127,6 +128,11 @@ app.whenReady().then(() => {
   ipcMain.handle('history:get', (event, input) => {
     if (!isTrustedSender(event)) return forbidden();
     return history.get(input);
+  });
+  const comparison = createComparisonService(history);
+  ipcMain.handle('history:compare', (event, input) => {
+    if (!isTrustedSender(event)) return forbidden();
+    return comparison.compare(input);
   });
 
   createWindow();
