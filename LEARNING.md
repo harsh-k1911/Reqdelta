@@ -600,4 +600,98 @@ Verification passed: all 210 tests, the production build, the database exercise,
 
 Message: `feat(history): persist encrypted execution snapshots`
 
-Next checkpoint: recursively compare two stored JSON responses.
+The recursive comparison engine is covered in Lesson 10 below. Connecting it to stored responses is the following checkpoint.
+
+## Lesson 10: the recursive JSON comparison engine
+
+This checkpoint implements the comparison algorithm as an independent function in `electron/json-diff.cjs`. It has no database, Electron, or HTTP dependency. Its inputs are JSON text strings, and its output is a change report. The next checkpoint will call it with response bodies read from History.
+
+Start with `npm run compare:demo`. The exercise compares the original student with version 2 and prints these observations:
+
+| Path | Change | Before | After |
+| --- | --- | --- | --- |
+| `/age` | Type changed | Number `20` | String `"20"` |
+| `/fullName` | Added | Missing | `"Rahul"` |
+| `/name` | Removed | `"Rahul"` | Missing |
+
+The program does not know that `name` was renamed. It observes one removal and one addition. It also cannot know whether these changes break a particular client; that depends on how the client uses the API.
+
+### What recursion means here
+
+Recursion means a function solves a smaller version of its own problem by calling itself. Our `walk(oldValue, newValue, path)` compares one pair of values. If they are objects or arrays, it calls `walk` on smaller pairs inside them.
+
+For the student example:
+
+1. `compareJsonBodies` parses both strings with `JSON.parse`. This gives JavaScript values rather than text lines.
+2. `walk(before, after, '')` begins with the two root objects.
+3. It gathers the union of their keys using `Set`, then sorts those keys for stable output order.
+4. At the key `age`, it calls `walk(20, '20', '/age')`. The number and string types differ, so `record` adds a type change and that call returns.
+5. The root call continues with its remaining keys. `fullName` exists only on the second side, so it records an addition. `name` exists only on the first side, so it records a removal.
+6. When all child calls return, the root call finishes. The returned report includes the change list, counts by kind, and an `equal` boolean.
+
+For a nested city, the calls become smaller step by step:
+
+```text
+walk(root objects, '')
+  walk(student objects, '/student')
+    walk(address objects, '/student/address')
+      walk('Pune', 'Mumbai', '/student/address/city')
+        record a value change, then return
+```
+
+The **base cases** are an added member, a removed member, different types, or primitive values. These cases do not recurse further. Matching objects and arrays are the recursive cases. Each call has its own arguments and local variables on the call stack, while all calls collect changes in the same result array.
+
+### Read the four helpers first
+
+`parseBody` checks text input and byte size before parsing. It replaces native syntax-error messages with a generic message, because parser errors can repeat response contents.
+
+`jsonType` handles two JavaScript surprises explicitly: `typeof null` is `object`, and arrays also have type `object`. We need separate `null`, `array`, and `object` categories to report type changes correctly.
+
+`pointerChild` appends a property name or array index to the current path. We use [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901), where `/student/age` identifies a nested value and `''` identifies the root. The escapes `~0` and `~1` keep literal tilde/slash characters inside a key unambiguous. An empty-string key has path `/`, which differs from the root.
+
+`record` creates one change, updates its category count, and enforces output limits. It includes the before/after values only when those sides exist. A missing member is not represented as `null`.
+
+### Missing is different from empty or false
+
+The unique `MISSING` Symbol marks a member that does not exist on one side. JSON cannot contain that Symbol, so it cannot be confused with an actual API value.
+
+`Object.hasOwn(value, key)` checks whether a member exists. Checking `if (value[key])` would be wrong: valid values such as `false`, `0`, `''`, and `null` are falsy. Even keys named `__proto__` or `constructor` are treated as ordinary own JSON members; the algorithm reads them without assigning them to a shared prototype.
+
+An added object is one added branch, carrying its object value. We do not also report each of its leaves as separate additions. Similarly, replacing an object with an array is one type change. This keeps the change counts clear and avoids describing the same replacement many times.
+
+### How arrays are compared
+
+Arrays use indexes, not object keys or IDs. The loop runs from 0 to the greater length. If one array has no item at an index, that side receives `MISSING`.
+
+Comparing `[1, 2]` with `[0, 1, 2]` reports value changes at `/0` and `/1`, then an addition at `/2`. The engine does not infer an insertion at the front or match objects by an `id` field. This is a deliberate first-version rule that you should explain during your demo.
+
+### Limits and number semantics
+
+Before comparing, `inspect` walks both complete inputs. It checks depth, total values, and supported numbers, including inside a branch that may later be reported as one addition. This prevents an unusually deep added object from escaping the checks.
+
+The bounds are 2 MiB of UTF-8 text per response, depth 128 with the root at 0, 100,000 values across both inputs, 500 changes, and 8 MiB of serialized change records. The last limit also bounds repeated long paths. Exceeding a limit throws a controlled error rather than returning an incomplete report that looks complete.
+
+Comparisons use parsed JavaScript values. Formatting and object member order do not matter. `1`, `1.0`, and `1e0` represent the same number here. Unsafe integers and non-finite numbers are refused; ordinary decimals still follow JavaScript floating-point rounding, so this is not exact decimal arithmetic. Duplicate member names follow `JSON.parse` behavior, keeping the final occurrence. Preserve the original response text for inspection when those distinctions matter.
+
+The work follows the input tree, with extra sorting cost for object keys. The recursive call stack grows with nesting depth, not with the total number of sibling fields. The parsed inputs, key lists, and change records also use memory, which is why the limits matter.
+
+### Practise it
+
+1. Run `npm run compare:demo` and point to the three records above. No desktop window or demo API is needed.
+2. In `scripts/compare-demo.cjs`, change `fullName` back to `name`. Predict how many changes remain before running the script again.
+3. Change the candidate age from string `'20'` to number `21`. Explain why the remaining age record becomes a value change rather than a type change.
+4. Add `address: { city: 'Pune' }` to the original and `address: { city: 'Mumbai' }` to the candidate. Predict the path, then trace the calls through `walk`.
+5. Try `[1, 2]` and `[0, 1, 2]` as the example values. Explain the three index-based changes.
+6. Restore the original example values before committing so the demo remains consistent with these notes.
+
+Checkpoint questions: What are the base and recursive cases? Why handle null and arrays before using `typeof`? Why use `Object.hasOwn`? Why is missing different from null? How does a child call return control to its parent? Why does a rename produce two observations? Why must hitting a limit produce an error instead of a partial “complete” report?
+
+### Git checkpoint 10
+
+Verification passed: all 257 tests, the production build, and the standalone comparison demo. Checks cover the three-change student example, nested values, arrays, whole-branch changes, escaped paths, prototype-looking keys, missing/null distinctions, number handling, and every resource limit. The algorithm is independent of the running desktop app; the interface and storage schema are unchanged in this checkpoint.
+
+**Commit now** after completing the exercise and restoring its original values. Include `electron/json-diff.cjs`, `scripts/compare-demo.cjs`, `tests/json-diff.test.mjs`, the new package script, README, and this lesson.
+
+Message: `feat(compare): add recursive JSON response diff engine`
+
+Next checkpoint: select two History entries, compare their stored JSON response bodies, and display the change report in the desktop app.

@@ -2,7 +2,7 @@
 
 A macOS desktop API testing and JSON response comparison project.
 
-**Current milestone: requests, collections, and encrypted execution history.** Save reusable configurations, execute requests, and reopen stored responses after an app restart without contacting the API again. JSON comparison is not implemented yet. This is source code you can run, not a packaged `.app` installer yet.
+**Current milestone: requests, collections, encrypted history, and the JSON comparison engine.** Save reusable configurations, execute requests, and reopen stored responses after an app restart. The comparison engine works through its tests and terminal demo; selecting responses for comparison in the desktop interface is the next checkpoint. This is source code you can run, not a packaged `.app` installer yet.
 
 ## Run the application
 
@@ -90,6 +90,26 @@ History automatically retains the newest **100 entries** within **50 MiB of encr
 
 If history encryption or writing fails, the HTTP result still appears with a separate **History was not saved** warning. The app does not automatically repeat the HTTP request. Opening a missing or unreadable snapshot shows an error without replacing it. Duration measures the HTTP attempt, excluding the later encryption/database work. History is committed before a normal Send action finishes; quitting during an in-flight request can prevent its completion from being recorded.
 
+## JSON comparison engine
+
+Run the standalone learning example:
+
+```sh
+npm run compare:demo
+```
+
+It compares made-up student JSON and reports three changes: `/name` removed, `/fullName` added, and `/age` changed from number to string. It makes no API calls and does not access your workspace database.
+
+`electron/json-diff.cjs` exports `compareJsonBodies(beforeBody, afterBody)`. It takes two JSON text strings and returns `{ equal, counts, changes }`. Each change has a `kind`, a path, before/after types, and values for the sides where the field exists. The kinds are `added`, `removed`, `typeChanged`, and `valueChanged`.
+
+Comparison is directional: fields present only in the second response are added. Objects are compared by their own member names, ignoring member order. Arrays are compared at matching indexes, including nested objects; inserting or reordering items may therefore produce several changes. There is no ID matching, move detection, rename inference, or automatic verdict that a change breaks a client. An entire added/removed branch or a changed-type branch is reported once.
+
+Paths use [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901): `/student/age`, `/items/0`, and an empty string for the root. A `~` in a field name becomes `~0`, and `/` becomes `~1`. Object changes use sorted property names for a stable report order. Missing values are distinct from `null`; their corresponding before/after value field is omitted.
+
+The engine compares parsed values rather than original text. Formatting, equivalent string escapes, `1` versus `1.0`, and `0` versus `-0` do not count as differences. Numbers use JavaScript's normal floating-point semantics, so this is not arbitrary-precision decimal comparison. Non-finite values and integers outside the safe-integer range are rejected instead of being used for comparison. Duplicate JSON member names follow `JSON.parse` behavior, which keeps the final occurrence.
+
+Limits are 2 MiB of UTF-8 JSON text per response, 128 levels of nesting (root at depth 0), 100,000 values across both inputs, 500 changes, and 8 MiB of serialized change records. Whole inputs are inspected, including branches later reported as a single addition/removal. Invalid or over-limit inputs throw a `JsonComparisonError` with a short message that does not repeat response contents. No partial comparison is returned as a complete result.
+
 ## What works now
 
 - A real Electron desktop window with a React interface.
@@ -113,8 +133,9 @@ If history encryption or writing fails, the HTTP result still appears with a sep
 - Automatic encrypted history for HTTP responses and execution failures, with bounded retention and pagination.
 - Offline snapshot inspection after restarting, including stored body, response headers, and request inputs.
 - Separate storage warnings that preserve the HTTP result and never trigger an automatic retry.
+- A tested recursive JSON comparison engine for added/removed fields, type/value changes, nested objects, and index-based arrays.
 
-The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are now persisted. JSON response comparison is the next core feature.
+The first startup creates empty storage tables. Collections, explicitly saved configurations, and execution snapshots are now persisted. Connecting the comparison engine to stored-response selection in History is the next checkpoint.
 
 ## SQLite storage foundation
 
@@ -195,6 +216,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `electron/collections-service.cjs` | Validates collection names and inserts/lists rows with prepared SQL |
 | `electron/saved-requests-service.cjs` | Validates, saves, lists, and restores request configurations without executing them |
 | `electron/history-service.cjs` | Encrypts execution snapshots, reads history, pages metadata, and prunes old entries transactionally |
+| `electron/json-diff.cjs` | Pure, bounded comparison of two JSON response texts with typed changes and paths |
 | `electron/secure-storage.cjs` | Serializes configurations and delegates encryption/decryption to macOS through Electron |
 | `electron/database.cjs` | Opens SQLite, applies pending migrations transactionally, and checks the schema version |
 | `electron/migrations/001-initial.sql` | Tables, relationships, constraints, and indexes for schema version 1 |
@@ -212,6 +234,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `scripts/dev.cjs` | Starts Vite and Electron together |
 | `scripts/demo-server.cjs` | Local API for learning and demonstrations |
 | `scripts/database-demo.cjs` | Isolated insert/close/reopen/read exercise using made-up records |
+| `scripts/compare-demo.cjs` | Standalone comparison example using made-up student JSON |
 | `tests/request-service.test.mjs` | Request validation and response/error tests |
 | `tests/database.test.mjs` | Real SQLite persistence, relationships, constraints, migration rollback, and existing-data protection |
 | `tests/collections-service.test.mjs` | Collection validation, SQL parameter binding, ordering, Unicode limits, and storage failures |
@@ -219,6 +242,7 @@ Signing and notarizing for public macOS distribution are a separate release task
 | `tests/secure-storage.test.mjs` | Native encryption delegation, unavailable storage, and key rotation handling |
 | `tests/request-runner.test.mjs` | Validation before execution, one HTTP attempt, failure outcomes, and separate history warnings |
 | `tests/history-service.test.mjs` | Independent snapshots, metadata paging, retention, rollback, unreadable data, and parent deletion |
+| `tests/json-diff.test.mjs` | Recursive changes, path escaping, missing/null distinctions, number handling, and comparison limits |
 | `scripts/smoke.cjs` | Checks the running desktop application |
 | `vite.config.mjs` | React build/dev setup and interface content policy |
 

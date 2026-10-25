@@ -13,6 +13,7 @@
     "start": "electron .",
     "demo": "node scripts/demo-server.cjs",
     "db:demo": "node scripts/database-demo.cjs",
+    "compare:demo": "node scripts/compare-demo.cjs",
     "test": "vitest run",
     "test:desktop": "npm run build && node scripts/smoke.cjs"
   },
